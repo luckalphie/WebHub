@@ -210,7 +210,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         let buttons = [backButton!, forwardButton!, homeButton!, reloadButton!]
         for b in buttons { topBar.addSubview(b) }
 
-        addressField = NSTextField()
+        addressField = CopyableTextField()
         addressField.translatesAutoresizingMaskIntoConstraints = false
         addressField.isBezeled = true
         addressField.bezelStyle = .roundedBezel
@@ -497,6 +497,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
+        let editItem = NSMenuItem()
+        editItem.submenu = makeEditMenu()
+        mainMenu.addItem(editItem)
+
         let navItem = NSMenuItem()
         let navMenu = NSMenu(title: "导航")
         navMenu.addItem(withTitle: "后退", action: #selector(goBack), keyEquivalent: "[")
@@ -516,6 +520,21 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         if window?.isKeyWindow == true {
             NSApplication.shared.mainMenu = mainMenu
         }
+    }
+
+    /// 站点菜单里原来没有「编辑」，导致 Cmd+C / Cmd+V 这些依赖菜单项的快捷键不生效
+    /// ——地址栏和网页里选中的文字都复制不出来。标准 Edit 菜单补齐这一步。
+    /// target 留空走响应链，落到当前第一响应者（field editor 或 WKWebView）。
+    private func makeEditMenu() -> NSMenu {
+        let menu = NSMenu(title: "编辑")
+        menu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        menu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        menu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        menu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        menu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        return menu
     }
 
     // MARK: WKNavigationDelegate
@@ -539,34 +558,74 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         return target == site
     }
 
-    /// 该不该交给系统默认浏览器打开
-    private func shouldOpenExternally(_ url: URL) -> Bool {
-        guard let scheme = url.scheme?.lowercased() else { return false }
+    // MARK: 中转链接解包
+
+    /// 站点常把出站链接包一层自己的中转页，例如腾讯文档：
+    ///   https://docs.qq.com/scenario/link.html?url=https%3A%2F%2Fexample.com
+    /// 剥掉这层再判断，否则默认浏览器里也只是停在别人的中转页上。
+    private static let redirectParamNames: Set<String> = [
+        "url", "u", "link", "target", "to", "goto", "redirect",
+        "redirect_uri", "redirect_url", "next", "q", "dest", "destination",
+    ]
+
+    /// 单层解包：查询串里哪个参数的值本身是 http(s) 绝对地址，就把它当作真实目标
+    private static func redirectTarget(of url: URL) -> URL? {
+        guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        for item in comps.queryItems ?? [] {
+            guard redirectParamNames.contains(item.name.lowercased()),
+                  let raw = item.value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty,
+                  let inner = URL(string: raw),
+                  let scheme = inner.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https",
+                  let host = inner.host, !host.isEmpty
+            else { continue }
+            return inner
+        }
+        return nil
+    }
+
+    /// 逐层剥到真实地址（限制层数并防环）
+    private static func unwrapRedirects(_ url: URL) -> URL {
+        var current = url
+        var visited: Set<String> = [url.absoluteString]
+        for _ in 0..<3 {
+            guard let next = redirectTarget(of: current),
+                  !visited.contains(next.absoluteString) else { break }
+            visited.insert(next.absoluteString)
+            current = next
+        }
+        return current
+    }
+
+    /// 该用默认浏览器打开的地址；nil 表示留在窗口内
+    private func externalDestination(for url: URL) -> URL? {
+        guard let scheme = url.scheme?.lowercased() else { return nil }
         // mailto: / tel: / 自定义协议 —— 本进程处理不了，交给系统更合适
-        if scheme != "http" && scheme != "https" { return true }
-        guard let host = url.host, !host.isEmpty else { return false }
-        return !isSameSite(host)
+        if scheme != "http" && scheme != "https" { return url }
+        let target = Self.unwrapRedirects(url)
+        guard let host = target.host, !host.isEmpty else { return nil }
+        return isSameSite(host) ? nil : target
     }
 
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let url = navigationAction.request.url, shouldOpenExternally(url) else {
-            decisionHandler(.allow)
-            return
-        }
-
         // 只拦「用户真的要去别处」的情况：点击链接，或者要开新窗口。
         // 自动重定向（SSO 回调、登录跳转）不拦 —— 否则会在浏览器里莫名蹦出页面。
         let isUserClick = navigationAction.navigationType == .linkActivated
         let wantsNewWindow = navigationAction.targetFrame == nil
-        guard isUserClick || wantsNewWindow else {
-            decisionHandler(.allow)
+
+        if let url = navigationAction.request.url,
+           let destination = externalDestination(for: url),
+           isUserClick || wantsNewWindow {
+            // 中转链接直接开真实地址，别让浏览器停在包装页上
+            NSWorkspace.shared.open(destination)
+            decisionHandler(.cancel)
             return
         }
 
-        NSWorkspace.shared.open(url)
-        decisionHandler(.cancel)
+        decisionHandler(.allow)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -601,10 +660,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         // target=_blank 之类：站内开新标签页，站外交给默认浏览器
         if let url = navigationAction.request.url {
-            if shouldOpenExternally(url) {
-                NSWorkspace.shared.open(url)
+            if let destination = externalDestination(for: url) {
+                NSWorkspace.shared.open(destination)
             } else {
-                addTab(url: url, activate: true)
+                // 站内中转页也直接落到真实地址，省一次跳转
+                addTab(url: Self.unwrapRedirects(url), activate: true)
                 persistSession()
             }
         }
@@ -706,5 +766,82 @@ extension RunnerWindowController: NSWindowDelegate {
         isClamping = true
         w.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
         isClamping = false
+    }
+}
+
+/// 地址栏用的只读文本框：可选中复制，并兼容 Windows 习惯的 Ctrl+C / Ctrl+A。
+/// macOS 原生只认 Cmd+C，二爷手上是 Ctrl 肌肉记忆，两个都给。
+final class CopyableTextField: NSTextField {
+    override func keyDown(with event: NSEvent) {
+        if handleControlCombo(event) { return }
+        super.keyDown(with: event)
+    }
+
+    /// 进入选中态后按键是发给 field editor（NSTextView）的，keyDown 收不到，
+    /// 所以在 performKeyEquivalent 里再拦一道。
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if handleControlCombo(event) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    /// Ctrl+C 复制、Ctrl+A 全选（Windows 习惯；不带 Cmd/Alt，免得和系统组合键打架）
+    private func handleControlCombo(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.control), !flags.contains(.command), !flags.contains(.option),
+              isActive,
+              let key = event.charactersIgnoringModifiers?.lowercased() else { return false }
+        switch key {
+        case "c":
+            copySelection()
+            return true
+        case "a":
+            selectAllInEditor()
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// 鼠标右键菜单里给一个「复制地址」，省得先拖选
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let copyItem = NSMenuItem(title: "复制地址", action: #selector(copyAll(_:)), keyEquivalent: "")
+        copyItem.target = self
+        menu.addItem(copyItem)
+        return menu
+    }
+
+    @objc private func copyAll(_ sender: Any?) {
+        guard let editor = ensureEditor() else { return }
+        editor.selectAll(nil)
+        editor.copy(nil)
+    }
+
+    private func copySelection() {
+        guard let editor = ensureEditor() as? NSTextView else { return }
+        // 没有选区时按「全选复制」处理，符合地址栏的使用直觉
+        if editor.selectedRange().length == 0 { editor.selectAll(nil) }
+        editor.copy(nil)
+    }
+
+    private func selectAllInEditor() {
+        guard let editor = ensureEditor() else { return }
+        editor.selectAll(nil)
+    }
+
+    /// 只有地址栏自己在编辑态时才吃键，别抢网页里的按键
+    private var isActive: Bool {
+        guard let responder = window?.firstResponder else { return false }
+        if responder === self { return true }
+        if let editor = currentEditor(), responder === editor { return true }
+        return false
+    }
+
+    /// 还没进入编辑态时先把自己设成第一响应者，否则拿不到 field editor
+    private func ensureEditor() -> NSText? {
+        if currentEditor() == nil, let w = window {
+            w.makeFirstResponder(self)
+        }
+        return currentEditor()
     }
 }

@@ -16,7 +16,8 @@ This is an independent project and is not affiliated with Apple, Google, or any 
 - **Shared sign-in** — one `WKWebsiteDataStore` for the whole process, so cookies, `localStorage`, `IndexedDB`, and service workers are literally the same data across all sites. Not synchronized copies: the same file.
 - **Password autofill** — credentials are saved in the macOS Keychain and injected at document start with native setters and composed events, so React and Vue forms pick them up.
 - **Per-site quit** — quitting a site window (⌘Q or the red button) closes only that site and removes only its Dock icon. Quitting the application center quits everything.
-- **Outbound links go to your browser** — clicking a link that points outside the site's own registrable domain opens it in your default browser instead of spawning another tab, while links within the domain (including cross-subdomain SSO hops) stay inside. Automatic redirects are never intercepted, so sign-in flows keep working.
+- **Outbound links go to your browser** — clicking a link whose hostname differs from the site's own opens it in your default browser instead of spawning another tab. Subdomains count as outbound too: `a.example.com` → `b.example.com` leaves the app. Redirect wrappers such as `docs.qq.com/scenario/link.html?url=…` are unwrapped first, so the browser lands on the real destination. Automatic redirects are never intercepted, so sign-in flows keep working.
+- **Copyable address bar** — select the URL and copy it with ⌘C (or Ctrl+C, for muscle memory from other platforms); right-click gives a "copy address" item.
 
 ## Architecture
 

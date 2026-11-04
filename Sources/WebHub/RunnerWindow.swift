@@ -523,20 +523,20 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     /// 本站点的主机名（用于判断链接是否「出站」）
     private var siteHost: String { (homeURL.host ?? "").lowercased() }
 
-    /// 粗判 IPv4：这种主机名没有可注册域，比根域会得到荒唐结果
-    private static func looksLikeIPv4(_ host: String) -> Bool {
-        let parts = host.split(separator: ".")
-        guard parts.count == 4 else { return false }
-        return parts.allSatisfy { UInt8($0) != nil }
+    /// 归一化主机名：小写 + 去掉末尾的点
+    private static func normalizedHost(_ host: String) -> String {
+        var result = host.lowercased()
+        while result.hasSuffix(".") { result.removeLast() }
+        return result
     }
 
-    /// 两个主机是否属于同一个站点（同根域，允许 SSO 跨子域）
+    /// 主机名完全一致才算站内。
+    /// 子域也算出站——例如站点是 a.example.com，链到 b.example.com 同样交给默认浏览器。
     private func isSameSite(_ host: String) -> Bool {
-        let target = host.lowercased()
-        guard !target.isEmpty, !siteHost.isEmpty else { return false }
-        if target == siteHost { return true }
-        if Self.looksLikeIPv4(target) || Self.looksLikeIPv4(siteHost) { return false }
-        return CredentialStore.registrableDomain(target) == CredentialStore.registrableDomain(siteHost)
+        let target = Self.normalizedHost(host)
+        let site = Self.normalizedHost(siteHost)
+        guard !target.isEmpty, !site.isEmpty else { return false }
+        return target == site
     }
 
     /// 该不该交给系统默认浏览器打开

@@ -41,6 +41,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private var activeIndex = 0
     private var running = false
     private var isClamping = false
+    private var changingFullScreen = false
     /// 本站点窗口专属菜单，等窗口成为 key 时才挂到全局
     private var siteMenu: NSMenu?
 
@@ -119,12 +120,26 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     private func buildWindow() {
-        let visible = visibleScreenFrame()
         let saved = UserDefaults.standard.dictionary(forKey: "WebHub.windowSize.\(appID)")
-        let savedWidth = saved?["width"] as? Double ?? 1200
-        let savedHeight = saved?["height"] as? Double ?? 800
-        let width = min(max(760, savedWidth), max(1, visible.width - 80))
-        let height = min(max(480, savedHeight), max(1, visible.height - 80))
+        let savedWidth = (saved?["width"] as? Double).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        let savedHeight = (saved?["height"] as? Double).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        let savedX = (saved?["x"] as? Double).flatMap { $0.isFinite ? $0 : nil }
+        let savedY = (saved?["y"] as? Double).flatMap { $0.isFinite ? $0 : nil }
+        let savedFrame: NSRect? = {
+            guard let x = savedX, let y = savedY, let width = savedWidth, let height = savedHeight else { return nil }
+            return NSRect(x: x, y: y, width: width, height: height)
+        }()
+        // 优先使用原窗口所在屏幕；显示器移除后回退到当前主屏幕。
+        let screen = savedFrame.flatMap { frame in
+            NSScreen.screens.filter { frame.intersects($0.visibleFrame) }.max { left, right in
+                let a = frame.intersection(left.visibleFrame)
+                let b = frame.intersection(right.visibleFrame)
+                return a.width * a.height < b.width * b.height
+            }
+        }
+        let visible = screen?.visibleFrame ?? visibleScreenFrame()
+        let width = min(max(760, savedWidth ?? 1200), max(1, savedWidth == nil ? visible.width - 80 : visible.width))
+        let height = min(max(480, savedHeight ?? 800), max(1, savedHeight == nil ? visible.height - 80 : visible.height))
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -140,6 +155,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         window.minSize = NSSize(width: min(760, width), height: min(480, height))
         window.maxSize = NSSize(width: visible.width, height: visible.height)
         window.center()
+        if let frame = savedFrame {
+            let x = min(max(frame.minX, visible.minX), visible.maxX - width)
+            let y = min(max(frame.minY, visible.minY), visible.maxY - height)
+            window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
+        }
         window.delegate = self
 
         let root = NSView()
@@ -524,15 +544,16 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     @objc private func appWillTerminate() {
-        persistWindowSize()
+        persistWindowFrame()
         persistSession()
     }
 
-    private func persistWindowSize() {
-        guard let window = window, !window.styleMask.contains(.fullScreen) else { return }
-        let size = window.frame.size
-        guard size.width > 0, size.height > 0 else { return }
-        UserDefaults.standard.set(["width": Double(size.width), "height": Double(size.height)],
+    private func persistWindowFrame() {
+        guard let window = window, !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
+        let frame = window.frame
+        guard frame.width > 0, frame.height > 0 else { return }
+        UserDefaults.standard.set(["x": Double(frame.minX), "y": Double(frame.minY),
+                                   "width": Double(frame.width), "height": Double(frame.height)],
                                   forKey: "WebHub.windowSize.\(appID)")
     }
 
@@ -784,7 +805,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
 extension RunnerWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        persistWindowSize()
+        persistWindowFrame()
         persistSession()
         // 单宿主：窗口没了就告诉 manager，让它收掉本站点的 shim 与 Dock 图标
         onWindowClosed?()
@@ -804,8 +825,32 @@ extension RunnerWindowController: NSWindowDelegate {
                       height: min(frameSize.height, v.height))
     }
 
-    func windowDidResize(_ notification: Notification) { clampFrameToScreen() }
-    func windowDidMove(_ notification: Notification) { clampFrameToScreen() }
+    func windowDidResize(_ notification: Notification) {
+        guard !isClamping, !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
+        clampFrameToScreen()
+        persistWindowFrame()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard !isClamping, !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
+        clampFrameToScreen()
+        persistWindowFrame()
+    }
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        persistWindowFrame()
+        changingFullScreen = true
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        changingFullScreen = false
+        persistWindowFrame()
+    }
+
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        changingFullScreen = false
+        persistWindowFrame()
+    }
 
     private func clampFrameToScreen() {
         guard let w = window, !isClamping else { return }

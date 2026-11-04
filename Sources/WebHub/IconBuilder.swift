@@ -34,7 +34,7 @@ enum IconBuilder {
             let font = NSFont.systemFont(ofSize: rect.width * 0.44, weight: .semibold)
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: font,
-                .foregroundColor: NSColor.white.withAlphaComponent(0.96)
+                .foregroundColor: accent.uppercased() == "#FFFFFF" ? NSColor.darkGray : NSColor.white.withAlphaComponent(0.96)
             ]
             let str = NSAttributedString(string: text, attributes: attrs)
             let s = str.size()

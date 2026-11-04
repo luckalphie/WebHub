@@ -15,13 +15,14 @@ struct WebApp: Codable, Identifiable, Equatable {
                name: name,
                url: url,
                iconFile: nil,
-               accent: accent ?? AccentPalette.random())
+               accent: accent ?? AccentPalette.defaultColor)
     }
 }
 
 enum AccentPalette {
+    static let defaultColor = "#FFFFFF"
     static let colors = [
-        "#F06030", "#3B82F6", "#8B5CF6", "#10B981",
+        defaultColor, "#F06030", "#3B82F6", "#8B5CF6", "#10B981",
         "#F59E0B", "#EC4899", "#06B6D4", "#6366F1"
     ]
 
@@ -170,6 +171,15 @@ final class AppStore {
         apps[idx].iconFile = filename
         save()
         return filename
+    }
+
+    func clearIcon(id: String) {
+        guard let idx = apps.firstIndex(where: { $0.id == id }) else { return }
+        if let icon = apps[idx].iconFile {
+            try? fm.removeItem(at: iconsDir.appendingPathComponent(icon))
+        }
+        apps[idx].iconFile = nil
+        save()
     }
 
     func iconURL(for app: WebApp) -> URL? {

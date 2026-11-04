@@ -89,7 +89,7 @@
     box-shadow: 0 10px 26px rgba(0,0,0,.34), 0 1px 0 rgba(255,255,255,.14) inset;
     background: #232a3a;
   }
-  .icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .icon img { width: 58%; height: 58%; object-fit: contain; display: block; }
   .icon .letter {
     font-size: 31px; font-weight: 600; color: rgba(255,255,255,.96);
   }
@@ -247,7 +247,7 @@ function post(type, payload) {
   if (bridge) bridge.postMessage(Object.assign({ type }, payload || {}));
 }
 
-const ACCENTS = ["#F06030","#3B82F6","#8B5CF6","#10B981","#F59E0B","#EC4899","#06B6D4","#6366F1"];
+const ACCENTS = ["#FFFFFF","#F06030","#3B82F6","#8B5CF6","#10B981","#F59E0B","#EC4899","#06B6D4","#6366F1"];
 let state = { apps: [], running: [] };
 let editingId = null;
 let chosenAccent = ACCENTS[0];
@@ -288,7 +288,7 @@ function tile(app) {
 
   const iconInner = app.icon
     ? `<img src="${esc(app.icon)}" alt="">`
-    : `<div class="letter" style="background:linear-gradient(160deg, ${esc(app.accent)}, ${esc(app.accent)}cc)">${esc((app.name || 'W').trim().slice(0,1).toUpperCase())}</div>`;
+    : `<div class="letter" style="color:${app.accent.toUpperCase() === '#FFFFFF' ? '#293142' : 'rgba(255,255,255,.96)'}">${esc((app.name || 'W').trim().slice(0,1).toUpperCase())}</div>`;
 
   el.innerHTML = `
     <div class="icon" style="background:linear-gradient(160deg, ${esc(app.accent)}, ${esc(app.accent)}cc)">
@@ -385,7 +385,7 @@ function openSheet(id) {
   sheetTitle.textContent = app ? '编辑应用' : '添加应用';
   fName.value = app ? app.name : '';
   fURL.value = app ? app.url : '';
-  chosenAccent = app ? app.accent : ACCENTS[Math.floor(Math.random() * ACCENTS.length)];
+  chosenAccent = app ? app.accent : ACCENTS[0];
   buildSwatches();
   mask.classList.add('show');
   setTimeout(() => (app ? fName : fName).focus(), 60);

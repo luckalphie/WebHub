@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CryptoKit
 import WebHubIPC
 
 /// 把站点打包成独立的 .app，从而在 Dock 里拥有自己的图标
@@ -78,10 +79,10 @@ enum RunnerPackager {
         guard let src = runnerBinaryPath(),
               let srcSize = (try? fm.attributesOfItem(atPath: src))?[.size] as? NSNumber
         else { return nil }
-        let iconKey = (try? fm.attributesOfItem(
-            atPath: AppStore.shared.iconsDir.appendingPathComponent(app.iconFile ?? "-").path
-        ))?[.size] as? NSNumber
-        return "\(app.id)|\(app.name)|\(app.url)|\(srcSize.intValue)|\(iconKey?.intValue ?? 0)"
+        let iconKey = AppStore.shared.iconURL(for: app)
+            .flatMap { try? Data(contentsOf: $0) }
+            .map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } ?? ""
+        return "\(app.id)|\(app.name)|\(app.url)|\(app.accent)|\(srcSize.intValue)|\(iconKey)"
     }
 
     private static func stampURL(_ bundleURL: URL) -> URL {
@@ -167,7 +168,11 @@ enum RunnerPackager {
 
         // 图标
         var iconName = ""
-        if let png = iconPNG ?? store.iconURL(for: app).flatMap({ try? Data(contentsOf: $0) }) {
+        let glyphData = iconPNG ?? store.iconURL(for: app).flatMap({ try? Data(contentsOf: $0) })
+        let glyph = glyphData.flatMap { NSImage(data: $0) }
+        let themedIcon = glyph.flatMap { IconBuilder.composeIcon(glyph: $0, accent: app.accent) }
+            ?? IconBuilder.letterIcon(name: app.name, accent: app.accent)
+        if let png = themedIcon {
             let icnsURL = resDir.appendingPathComponent("AppIcon.icns")
             if IconBuilder.icns(fromPNG: png, to: icnsURL) {
                 iconName = "AppIcon"

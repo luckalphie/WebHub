@@ -8,6 +8,8 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     private var webView: WKWebView!
     private var ready = false
     private var pendingPayload: String?
+    private let windowFrameKey = "WebHub.launcherWindowFrame"
+    private var changingFullScreen = false
     /// 单宿主下菜单是全局的，站点窗口会挂上自己那份；切回应用中心时要还原
     private var launcherMenu: NSMenu?
 
@@ -40,6 +42,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         window.backgroundColor = NSColor(calibratedRed: 0.05, green: 0.06, blue: 0.09, alpha: 1)
         window.isMovableByWindowBackground = true
         window.center()
+        restoreWindowFrame()
         window.delegate = self
         window.contentView = webView
         window.makeKeyAndOrderFront(nil)
@@ -52,6 +55,8 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         installPasteShortcut()
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
                                                name: NSApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(saveWindowFrameOnExit),
+                                               name: NSApplication.willTerminateNotification, object: nil)
     }
 
     /// 点 Dock 图标 / reopen 时把应用中心窗口叫回来。
@@ -66,8 +71,46 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     /// 关红叉只是收起窗口，进程留在后台 —— 和 Chrome 一致。
     /// 站点窗口还开着时更不能因为「应用中心关了」而影响它们。
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        saveWindowFrame()
         sender.orderOut(nil)
         return false
+    }
+
+    private func restoreWindowFrame() {
+        guard let values = UserDefaults.standard.array(forKey: windowFrameKey) as? [Double],
+              values.count == 4, values.allSatisfy({ $0.isFinite }),
+              values[2] > 0, values[3] > 0 else { return }
+        let saved = NSRect(x: values[0], y: values[1], width: values[2], height: values[3])
+        let screens = NSScreen.screens
+        let screen = screens.max { left, right in
+            let a = saved.intersection(left.visibleFrame)
+            let b = saved.intersection(right.visibleFrame)
+            return max(0, a.width) * max(0, a.height) < max(0, b.width) * max(0, b.height)
+        }
+        let visible = (screen.flatMap { saved.intersects($0.visibleFrame) ? $0 : nil } ?? NSScreen.main ?? screens.first)?.visibleFrame
+        guard let visible = visible else { return }
+        let width = min(max(saved.width, window.minSize.width), visible.width)
+        let height = min(max(saved.height, window.minSize.height), visible.height)
+        let x = min(max(saved.minX, visible.minX), visible.maxX - width)
+        let y = min(max(saved.minY, visible.minY), visible.maxY - height)
+        window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
+    }
+
+    private func saveWindowFrame() {
+        guard let window = window, !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
+        let frame = window.frame
+        guard frame.width > 0, frame.height > 0 else { return }
+        UserDefaults.standard.set([Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)], forKey: windowFrameKey)
+    }
+
+    @objc private func saveWindowFrameOnExit() { saveWindowFrame() }
+
+    func windowDidMove(_ notification: Notification) { saveWindowFrame() }
+    func windowDidResize(_ notification: Notification) { saveWindowFrame() }
+    func windowWillEnterFullScreen(_ notification: Notification) { changingFullScreen = true }
+    func windowDidExitFullScreen(_ notification: Notification) {
+        changingFullScreen = false
+        saveWindowFrame()
     }
 
     private static func htmlURL() -> URL? {
@@ -151,12 +194,13 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
         case "update":
             guard let id = body["id"] as? String else { return }
+            guard let previous = store.apps.first(where: { $0.id == id }) else { return }
             let name = body["name"] as? String
             let url = body["url"] as? String
             let accent = body["accent"] as? String
             guard let updated = store.update(id: id, name: name, url: url, accent: accent) else { return }
             refresh()
-            let urlChanged = (url != nil)
+            let urlChanged = previous.url != updated.url
             if urlChanged { fetchIcon(for: updated, announce: false) }
             // 已打包过的 app 需要更新元数据
             _ = RunnerPackager.ensureApp(for: updated, iconPNG: nil)
@@ -214,7 +258,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
     private func fetchIcon(for app: WebApp, announce: Bool) {
         IconFetcher.fetch(for: app.url) { [weak self] png in
-            guard let self = self else { return }
+            guard let self = self,
+                  let current = AppStore.shared.apps.first(where: { $0.id == app.id }),
+                  current.url == app.url else { return }
             if let png = png, let _ = AppStore.shared.setIcon(id: app.id, png: png) {
                 // 重新打包以更新 Dock 图标
                 if let updated = AppStore.shared.apps.first(where: { $0.id == app.id }) {
@@ -223,10 +269,11 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
                 self.refresh()
             } else {
                 // 兜底：字母图标
-                let fallback = IconBuilder.letterIcon(name: app.name, accent: app.accent)
-                if let png = fallback, let _ = AppStore.shared.setIcon(id: app.id, png: png) {
-                    self.refresh()
+                AppStore.shared.clearIcon(id: current.id)
+                if let updated = AppStore.shared.apps.first(where: { $0.id == app.id }) {
+                    _ = RunnerPackager.ensureApp(for: updated, iconPNG: nil)
                 }
+                self.refresh()
                 if announce { self.eval("window.hubToast('未能抓取网站图标，已使用字母图标')") }
             }
         }

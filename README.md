@@ -12,7 +12,7 @@ This is an independent project and is not affiliated with Apple, Google, or any 
 
 - **Application center** — a grid of site tiles. Add a site by entering a name and a URL; the favicon is fetched automatically and can be replaced.
 - **Real Dock icons** — every configured site becomes its own `.app` with a unique bundle identifier, so it appears in the Dock, in Launchpad, and in the app switcher like a native application.
-- **Independent windows** — each site opens in its own window with tabs, back / forward / reload / home buttons, and an editable address bar. The last session's tabs are restored on launch.
+- **Independent windows** — each site opens in its own window with tabs, back / forward / reload / home buttons, and a copyable, read-only address bar. Saved tabs can be restored when reopening the site.
 - **Shared sign-in** — one `WKWebsiteDataStore` for the whole process, so cookies, `localStorage`, `IndexedDB`, and service workers are literally the same data across all sites. Not synchronized copies: the same file.
 - **Password autofill** — credentials are saved in the macOS Keychain and injected at document start with native setters and composed events, so React and Vue forms pick them up.
 - **Per-site quit** — quitting a site window (⌘Q or the red button) closes only that site and removes only its Dock icon. Quitting the application center quits everything.
@@ -78,7 +78,7 @@ WebHub contains no telemetry and no analytics. Its only network activity is load
 ## Status and limitations
 
 - Developed and tested on Apple Silicon against macOS 27. The macOS 14 deployment target is not a claim that every supported release has been exercised.
-- One misbehaving site can hang the whole application — that is the cost of a single host process. There is no per-site crash isolation.
-- Sign-in state cannot be shared with Safari. `~/Library/Containers/com.apple.Safari` is protected by TCC, the `HttpOnly` session cookie is unreadable from outside, and Safari rewrites its store wholesale on quit.
-- The shim process is a real `.app`, so a site keeps its Dock tile through a host restart only if that tile is still open.
+- Site windows share one WebHub host process. A host crash or main-thread hang affects every site. WebKit uses separate content processes, but complete isolation between sites is not guaranteed.
+- WebHub uses its own website data store and does not directly share Safari's cookies or sign-in state.
+- WebHub attempts to restore a site's saved tabs when that site is reopened; exiting WebHub does not automatically reopen all site windows. Closing the last tab clears that site's saved session.
 - `Resources/WebHub.icns` is a checked-in binary; `sh tools/make-icon.sh` regenerates it from the drawing code in `tools/makeicon.swift`.

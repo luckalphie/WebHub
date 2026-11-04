@@ -8,6 +8,7 @@ final class TabItem {
     let webView: WKWebView
     var title: String
     var url: URL
+    var titleObservation: NSKeyValueObservation?
 
     init(webView: WKWebView, title: String, url: URL) {
         self.webView = webView
@@ -162,6 +163,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         tabStack.orientation = .horizontal
         tabStack.spacing = 4
         tabStack.alignment = .centerY
+        tabStack.distribution = .fillEqually
         tabStack.translatesAutoresizingMaskIntoConstraints = false
         // 标签变多时允许压缩，绝不让标签栏把窗口往宽撑
         tabStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
@@ -205,7 +207,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         forwardButton = toolbarButton("chevron.right", "前进", #selector(goForward))
         homeButton = toolbarButton("house", "主页", #selector(goHome))
         reloadButton = toolbarButton("arrow.clockwise", "刷新", #selector(reload))
-        newTabButton = toolbarButton("plus", "新标签页", #selector(newTab))
+        newTabButton = toolbarButton("plus", "复制当前标签页", #selector(newTab))
 
         let buttons = [backButton!, forwardButton!, homeButton!, reloadButton!]
         for b in buttons { topBar.addSubview(b) }
@@ -289,6 +291,16 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
         let tab = TabItem(webView: wv, title: "加载中…", url: url)
         tabs.append(tab)
+        tab.titleObservation = wv.observe(\.title, options: [.new]) { [weak self, weak tab] webView, _ in
+            guard let self = self, let tab = tab,
+                  self.tabs.contains(where: { $0 === tab }) else { return }
+            let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let updated = (title?.isEmpty == false ? title : nil) ?? webView.url?.host ?? tab.url.host ?? "加载中…"
+            guard tab.title != updated else { return }
+            tab.title = updated
+            if self.activeTab === tab { self.window.title = updated }
+            self.rebuildTabBar()
+        }
 
         wv.load(URLRequest(url: url))
         if activate {
@@ -306,6 +318,32 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     @objc private func closeTabClicked(_ sender: NSButton) {
         closeTab(at: sender.tag)
+    }
+
+    @objc private func duplicateTabFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let tab = tabs.first(where: { $0.id == id }) else { return }
+        addTab(url: tab.webView.url ?? tab.url, activate: true)
+        persistSession()
+    }
+
+    @objc private func closeTabFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        closeTab(at: index)
+    }
+
+    private func tabContextMenu(for id: UUID) -> NSMenu {
+        let menu = NSMenu()
+        let duplicate = NSMenuItem(title: "复制标签页", action: #selector(duplicateTabFromMenu(_:)), keyEquivalent: "")
+        duplicate.target = self
+        duplicate.representedObject = id
+        menu.addItem(duplicate)
+        let close = NSMenuItem(title: "关闭标签页", action: #selector(closeTabFromMenu(_:)), keyEquivalent: "")
+        close.target = self
+        close.representedObject = id
+        menu.addItem(close)
+        return menu
     }
 
     private func selectTab(_ index: Int) {
@@ -332,6 +370,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private func closeTab(at index: Int) {
         guard tabs.indices.contains(index) else { return }
         let tab = tabs.remove(at: index)
+        tab.titleObservation?.invalidate()
+        tab.titleObservation = nil
         tab.webView.configuration.userContentController.removeScriptMessageHandler(forName: "tab")
         tab.webView.stopLoading()
         tab.webView.removeFromSuperview()
@@ -371,9 +411,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
                 ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.22).cgColor
                 : NSColor.clear.cgColor)
             holder.translatesAutoresizingMaskIntoConstraints = false
+            holder.menu = tabContextMenu(for: tab.id)
 
             let titleBtn = NSButton(title: tab.title, target: self, action: #selector(tabClicked(_:)))
             titleBtn.tag = i
+            titleBtn.menu = tabContextMenu(for: tab.id)
             titleBtn.isBordered = false
             titleBtn.font = NSFont.systemFont(ofSize: 12, weight: i == activeIndex ? .medium : .regular)
             titleBtn.contentTintColor = i == activeIndex ? .labelColor : .secondaryLabelColor
@@ -385,6 +427,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
             let closeBtn = NSButton(title: "", target: self, action: #selector(closeTabClicked(_:)))
             closeBtn.tag = i
+            closeBtn.menu = tabContextMenu(for: tab.id)
             closeBtn.isBordered = false
             if #available(macOS 11.0, *) {
                 closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭标签")
@@ -393,11 +436,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             closeBtn.translatesAutoresizingMaskIntoConstraints = false
             holder.addSubview(closeBtn)
 
-            let minTabWidth = holder.widthAnchor.constraint(greaterThanOrEqualToConstant: 92)
-            minTabWidth.priority = .defaultLow
+            let preferredTabWidth = holder.widthAnchor.constraint(equalToConstant: 220)
+            preferredTabWidth.priority = .defaultLow
             NSLayoutConstraint.activate([
-                minTabWidth,
-                holder.widthAnchor.constraint(lessThanOrEqualToConstant: 200),
+                preferredTabWidth,
+                holder.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
                 holder.heightAnchor.constraint(equalToConstant: 26),
                 titleBtn.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 9),
                 titleBtn.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
@@ -439,7 +482,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     @objc private func newTab() {
-        addTab(url: homeURL, activate: true)
+        let url = activeTab.map { $0.webView.url ?? $0.url } ?? homeURL
+        addTab(url: url, activate: true)
         persistSession()
     }
 
@@ -508,7 +552,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         navMenu.addItem(withTitle: "主页", action: #selector(goHome), keyEquivalent: "H")
         navMenu.addItem(withTitle: "刷新", action: #selector(reload), keyEquivalent: "r")
         navMenu.addItem(NSMenuItem.separator())
-        navMenu.addItem(withTitle: "新建标签页", action: #selector(newTab), keyEquivalent: "t")
+        navMenu.addItem(withTitle: "复制当前标签页", action: #selector(newTab), keyEquivalent: "t")
         navMenu.addItem(withTitle: "关闭标签页", action: #selector(closeCurrentTab), keyEquivalent: "w")
         navItem.submenu = navMenu
         mainMenu.addItem(navItem)

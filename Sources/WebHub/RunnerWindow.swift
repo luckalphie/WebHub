@@ -120,8 +120,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     private func buildWindow() {
         let visible = visibleScreenFrame()
-        let width = min(1200, visible.width - 80)
-        let height = min(800, visible.height - 80)
+        let saved = UserDefaults.standard.dictionary(forKey: "WebHub.windowSize.\(appID)")
+        let savedWidth = saved?["width"] as? Double ?? 1200
+        let savedHeight = saved?["height"] as? Double ?? 800
+        let width = min(max(760, savedWidth), max(1, visible.width - 80))
+        let height = min(max(480, savedHeight), max(1, visible.height - 80))
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -521,7 +524,16 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     @objc private func appWillTerminate() {
+        persistWindowSize()
         persistSession()
+    }
+
+    private func persistWindowSize() {
+        guard let window = window, !window.styleMask.contains(.fullScreen) else { return }
+        let size = window.frame.size
+        guard size.width > 0, size.height > 0 else { return }
+        UserDefaults.standard.set(["width": Double(size.width), "height": Double(size.height)],
+                                  forKey: "WebHub.windowSize.\(appID)")
     }
 
     // MARK: 菜单
@@ -772,6 +784,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
 extension RunnerWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
+        persistWindowSize()
         persistSession()
         // 单宿主：窗口没了就告诉 manager，让它收掉本站点的 shim 与 Dock 图标
         onWindowClosed?()

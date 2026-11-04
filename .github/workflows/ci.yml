@@ -1,0 +1,46 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show developer tools
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+          xcrun --sdk macosx --show-sdk-path
+      - name: Check shell syntax
+        run: |
+          for script in scripts/*.sh; do
+            sh -n "$script"
+          done
+      - name: Build
+        run: swift build -c release
+      - name: Package app bundle
+        run: sh scripts/build-app.sh
+      - name: Verify bundle layout
+        run: |
+          test -x dist/WebHub.app/Contents/MacOS/WebHub
+          test -f dist/WebHub.app/Contents/Resources/launcher.html
+          test -f dist/WebHub.app/Contents/Resources/WebHub.icns
+          test -x dist/WebHub.app/Contents/Resources/WebHubRunner.app/Contents/MacOS/WebHubRunner
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" dist/WebHub.app/Contents/Info.plist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WebHub-app
+          path: dist/WebHub.app
+          if-no-files-found: error

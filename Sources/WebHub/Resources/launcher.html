@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebHub</title>
+<style>
+  :root {
+    --tile: 80px;
+    --gap: 34px;
+    --label: rgba(255,255,255,.92);
+  }
+  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+    background: #0d1016;
+    color: #fff;
+  }
+  /* 壁纸 */
+  .wallpaper {
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(1100px 700px at 12% 6%, rgba(96,165,250,.42), transparent 62%),
+      radial-gradient(900px 640px at 88% 4%, rgba(232,121,249,.30), transparent 60%),
+      radial-gradient(1000px 780px at 72% 96%, rgba(251,146,60,.30), transparent 62%),
+      radial-gradient(820px 600px at 20% 92%, rgba(16,185,129,.24), transparent 62%),
+      linear-gradient(160deg, #101627 0%, #131a2c 42%, #0c1220 100%);
+    filter: saturate(1.05);
+  }
+  .wallpaper::after {
+    content: ""; position: absolute; inset: 0;
+    background-image: radial-gradient(rgba(255,255,255,.055) 1px, transparent 1px);
+    background-size: 3px 3px;
+    opacity: .5;
+  }
+
+  .stage { position: relative; height: 100%; display: flex; flex-direction: column; }
+
+  /* 顶部栏：窗口拖动由系统标题栏负责，WKWebView 不支持 -webkit-app-region */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 34px 6px; flex: 0 0 auto;
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand h1 {
+    margin: 0; font-size: 21px; font-weight: 600; letter-spacing: .2px;
+    text-shadow: 0 1px 12px rgba(0,0,0,.35);
+  }
+  .brand span { font-size: 12.5px; color: rgba(255,255,255,.52); letter-spacing: .3px; }
+  .hint { font-size: 12px; color: rgba(255,255,255,.42); }
+
+  /* 网格 */
+  .gridwrap {
+    flex: 1 1 auto; overflow-y: auto; overflow-x: hidden;
+    padding: 26px 40px 60px;
+  }
+  .gridwrap::-webkit-scrollbar { width: 10px; }
+  .gridwrap::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,.16); border-radius: 8px; border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--tile), var(--tile)));
+    gap: var(--gap);
+    justify-content: start;
+    align-content: start;
+  }
+
+  /* 图标单元 */
+  .app {
+    width: var(--tile); display: flex; flex-direction: column; align-items: center;
+    gap: 8px; cursor: default; position: relative;
+    transition: transform .16s cubic-bezier(.3,.9,.3,1);
+  }
+  .app:hover { transform: translateY(-2px); }
+  .app:active { transform: scale(.94); }
+  .app.dragging { opacity: .38; }
+  .app.drop-target::before {
+    content: ""; position: absolute; inset: -10px -8px -6px;
+    border-radius: 22px; border: 1.5px dashed rgba(255,255,255,.5);
+  }
+
+  .icon {
+    width: var(--tile); height: var(--tile);
+    border-radius: 19px; overflow: hidden; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 10px 26px rgba(0,0,0,.34), 0 1px 0 rgba(255,255,255,.14) inset;
+    background: #232a3a;
+  }
+  .icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .icon .letter {
+    font-size: 31px; font-weight: 600; color: rgba(255,255,255,.96);
+  }
+  .icon .badge {
+    position: absolute; right: -5px; top: -5px;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: #34d399; border: 2.5px solid #131a2c;
+    opacity: 0; transition: opacity .2s;
+  }
+  .app.running .badge { opacity: 1; }
+
+  .name {
+    font-size: 11.5px; line-height: 1.25; color: var(--label);
+    text-align: center; max-width: calc(var(--tile) + 12px);
+    text-shadow: 0 1px 6px rgba(0,0,0,.55);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* 新增按钮 */
+  .app.add .icon {
+    background: rgba(255,255,255,.09);
+    border: 1.6px dashed rgba(255,255,255,.34);
+    box-shadow: none;
+    backdrop-filter: blur(6px);
+  }
+  .app.add .icon span { font-size: 28px; font-weight: 300; color: rgba(255,255,255,.78); }
+  .app.add:hover .icon { background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.5); }
+
+  /* 空状态 */
+  .empty {
+    margin: 60px 0 0; color: rgba(255,255,255,.5); font-size: 13.5px; line-height: 2;
+  }
+
+  /* 右键菜单 */
+  .menu {
+    position: fixed; z-index: 40; min-width: 168px; padding: 6px;
+    border-radius: 12px; background: rgba(38,44,58,.86);
+    backdrop-filter: blur(22px) saturate(1.4);
+    border: 1px solid rgba(255,255,255,.14);
+    box-shadow: 0 18px 44px rgba(0,0,0,.5);
+    display: none;
+  }
+  .menu.show { display: block; animation: pop .13s ease-out; }
+  @keyframes pop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+  .menu button {
+    display: flex; width: 100%; align-items: center; gap: 9px;
+    padding: 8px 10px; border: 0; border-radius: 8px; background: transparent;
+    color: #eef2f8; font-size: 13px; text-align: left; cursor: default;
+    font-family: inherit;
+  }
+  .menu button:hover { background: rgba(255,255,255,.11); }
+  .menu button.danger { color: #ff8087; }
+  .menu .sep { height: 1px; margin: 5px 6px; background: rgba(255,255,255,.11); }
+
+  /* 编辑弹窗 */
+  .sheet-mask {
+    position: fixed; inset: 0; z-index: 60; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(6,9,16,.52); backdrop-filter: blur(8px);
+  }
+  .sheet-mask.show { display: flex; }
+  .sheet {
+    width: 396px; padding: 24px; border-radius: 18px;
+    background: rgba(34,40,54,.94);
+    border: 1px solid rgba(255,255,255,.13);
+    box-shadow: 0 30px 70px rgba(0,0,0,.55);
+    animation: pop .16s ease-out;
+  }
+  .sheet h2 { margin: 0 0 18px; font-size: 15.5px; font-weight: 600; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 11.5px; color: rgba(255,255,255,.55); margin-bottom: 6px; letter-spacing: .2px; }
+  .field input {
+    width: 100%; padding: 9px 11px; border-radius: 9px;
+    border: 1px solid rgba(255,255,255,.16);
+    background: rgba(255,255,255,.07); color: #fff;
+    font-size: 13px; font-family: inherit; outline: none;
+    -webkit-user-select: text; user-select: text;
+  }
+  .field input:focus { border-color: rgba(96,165,250,.85); background: rgba(255,255,255,.1); }
+  .field .tip { font-size: 11px; color: rgba(255,255,255,.38); margin-top: 5px; }
+
+  .swatches { display: flex; gap: 9px; }
+  .swatch {
+    width: 24px; height: 24px; border-radius: 50%; cursor: default;
+    border: 2px solid transparent; transition: transform .12s;
+  }
+  .swatch:hover { transform: scale(1.12); }
+  .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.22); }
+
+  .sheet-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }
+  .btn {
+    padding: 8px 17px; border-radius: 9px; border: 1px solid rgba(255,255,255,.16);
+    background: rgba(255,255,255,.08); color: #eef2f8;
+    font-size: 13px; cursor: default; font-family: inherit;
+  }
+  .btn:hover { background: rgba(255,255,255,.15); }
+  .btn.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; font-weight: 500; }
+  .btn.primary:hover { background: #4a8dfa; }
+  .btn:disabled { opacity: .45; }
+</style>
+</head>
+<body>
+<div class="wallpaper"></div>
+<div class="stage">
+  <header>
+    <div class="brand">
+      <h1>WebHub</h1>
+      <span id="count"></span>
+    </div>
+    <div class="hint">点图标打开 · 右键管理 · 拖拽排序</div>
+  </header>
+  <div class="gridwrap">
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty" style="display:none">
+      还没有应用。<br>点右下角「+」或右键空白处添加你的第一个网站。
+    </div>
+  </div>
+</div>
+
+<div class="menu" id="menu">
+  <button data-act="open">打开</button>
+  <button data-act="edit">编辑…</button>
+  <button data-act="reicon">刷新图标</button>
+  <div class="sep"></div>
+  <button data-act="clearlogin">清除该站点登录状态</button>
+  <button data-act="delete" class="danger">从桌面移除</button>
+</div>
+
+<div class="sheet-mask" id="mask">
+  <div class="sheet">
+    <h2 id="sheetTitle">添加应用</h2>
+    <div class="field">
+      <label>名称</label>
+      <input id="fName" placeholder="例如 Bing" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>网址</label>
+      <input id="fURL" placeholder="https://example.com" spellcheck="false">
+      <div class="tip">不写协议会自动补 https://</div>
+    </div>
+    <div class="field">
+      <label>主题色</label>
+      <div class="swatches" id="swatches"></div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn" id="btnCancel">取消</button>
+      <button class="btn primary" id="btnSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const bridge = window.webkit && window.webkit.messageHandlers ? window.webkit.messageHandlers.hub : null;
+function post(type, payload) {
+  if (bridge) bridge.postMessage(Object.assign({ type }, payload || {}));
+}
+
+const ACCENTS = ["#F06030","#3B82F6","#8B5CF6","#10B981","#F59E0B","#EC4899","#06B6D4","#6366F1"];
+let state = { apps: [], running: [] };
+let editingId = null;
+let chosenAccent = ACCENTS[0];
+let menuTargetId = null;
+
+const grid = document.getElementById('grid');
+const empty = document.getElementById('empty');
+const menu = document.getElementById('menu');
+const mask = document.getElementById('mask');
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function render() {
+  const apps = state.apps || [];
+  document.getElementById('count').textContent = apps.length ? apps.length + ' 个应用' : '';
+  empty.style.display = apps.length ? 'none' : 'block';
+
+  grid.innerHTML = '';
+  for (const app of apps) {
+    grid.appendChild(tile(app));
+  }
+  const add = document.createElement('div');
+  add.className = 'app add';
+  add.innerHTML = '<div class="icon"><span>+</span></div><div class="name">添加</div>';
+  add.addEventListener('click', () => openSheet(null));
+  grid.appendChild(add);
+}
+
+function tile(app) {
+  const el = document.createElement('div');
+  el.className = 'app' + (state.running.includes(app.id) ? ' running' : '');
+  el.dataset.id = app.id;
+  el.draggable = true;
+
+  const iconInner = app.icon
+    ? `<img src="${esc(app.icon)}" alt="">`
+    : `<div class="letter" style="background:linear-gradient(160deg, ${esc(app.accent)}, ${esc(app.accent)}cc)">${esc((app.name || 'W').trim().slice(0,1).toUpperCase())}</div>`;
+
+  el.innerHTML = `
+    <div class="icon" style="background:linear-gradient(160deg, ${esc(app.accent)}, ${esc(app.accent)}cc)">
+      ${iconInner}
+      <div class="badge"></div>
+    </div>
+    <div class="name">${esc(app.name)}</div>`;
+
+  el.addEventListener('dblclick', () => post('open', { id: app.id }));
+  el.addEventListener('click', (e) => { if (e.detail === 1) el._single = setTimeout(() => post('open', { id: app.id }), 190); });
+  el.addEventListener('dblclick', () => clearTimeout(el._single));
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    clearTimeout(el._single);
+    showMenu(e.clientX, e.clientY, app.id);
+  });
+
+  el.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/plain', app.id);
+    e.dataTransfer.effectAllowed = 'move';
+    el.classList.add('dragging');
+  });
+  el.addEventListener('dragend', () => el.classList.remove('dragging'));
+  el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drop-target'); });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.classList.remove('drop-target');
+    const from = e.dataTransfer.getData('text/plain');
+    const to = app.id;
+    if (from && from !== to) post('move', { from, to });
+  });
+
+  return el;
+}
+
+// 单击打开（区分双击）
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.app')) hideMenu();
+});
+
+function showMenu(x, y, id) {
+  menuTargetId = id;
+  menu.classList.add('show');
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = Math.min(x, window.innerWidth - rect.width - 12) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - rect.height - 12) + 'px';
+}
+function hideMenu() { menu.classList.remove('show'); menuTargetId = null; }
+
+menu.addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn || !menuTargetId) return;
+  const act = btn.dataset.act;
+  const id = menuTargetId;
+  hideMenu();
+  if (act === 'open') post('open', { id });
+  else if (act === 'edit') openSheet(id);
+  else if (act === 'reicon') post('reicon', { id });
+  else if (act === 'clearlogin') post('clearlogin', { id });
+  else if (act === 'delete') post('delete', { id });
+});
+
+// 空白处右键 → 添加
+document.querySelector('.gridwrap').addEventListener('contextmenu', (e) => {
+  if (e.target.closest('.app')) return;
+  e.preventDefault();
+  hideMenu();
+  openSheet(null);
+});
+
+// ---------- 编辑弹窗 ----------
+const fName = document.getElementById('fName');
+const fURL = document.getElementById('fURL');
+const swatches = document.getElementById('swatches');
+const btnSave = document.getElementById('btnSave');
+const btnCancel = document.getElementById('btnCancel');
+const sheetTitle = document.getElementById('sheetTitle');
+
+function buildSwatches() {
+  swatches.innerHTML = '';
+  ACCENTS.forEach(c => {
+    const d = document.createElement('div');
+    d.className = 'swatch' + (c === chosenAccent ? ' active' : '');
+    d.style.background = `linear-gradient(160deg, ${c}, ${c}cc)`;
+    d.addEventListener('click', () => { chosenAccent = c; buildSwatches(); });
+    swatches.appendChild(d);
+  });
+}
+
+function openSheet(id) {
+  editingId = id;
+  const app = id ? state.apps.find(a => a.id === id) : null;
+  sheetTitle.textContent = app ? '编辑应用' : '添加应用';
+  fName.value = app ? app.name : '';
+  fURL.value = app ? app.url : '';
+  chosenAccent = app ? app.accent : ACCENTS[Math.floor(Math.random() * ACCENTS.length)];
+  buildSwatches();
+  mask.classList.add('show');
+  setTimeout(() => (app ? fName : fName).focus(), 60);
+}
+
+function closeSheet() { mask.classList.remove('show'); editingId = null; }
+
+btnCancel.addEventListener('click', closeSheet);
+mask.addEventListener('click', (e) => { if (e.target === mask) closeSheet(); });
+
+btnSave.addEventListener('click', () => {
+  const name = fName.value.trim();
+  const url = fURL.value.trim();
+  if (!name || !url) {
+    (name ? fURL : fName).focus();
+    return;
+  }
+  btnSave.disabled = true;
+  if (editingId) {
+    post('update', { id: editingId, name, url, accent: chosenAccent });
+  } else {
+    post('add', { name, url, accent: chosenAccent });
+  }
+  setTimeout(() => { btnSave.disabled = false; }, 400);
+  closeSheet();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeSheet(); hideMenu(); }
+  if (e.key === 'Enter' && mask.classList.contains('show')) btnSave.click();
+});
+
+// ---------- 来自原生 ----------
+window.hubRender = function (json) {
+  try {
+    state = typeof json === 'string' ? JSON.parse(json) : json;
+  } catch (_) { return; }
+  render();
+};
+window.hubSetRunning = function (listJSON) {
+  try { state.running = JSON.parse(listJSON); } catch (_) { state.running = []; }
+  render();
+};
+window.hubToast = function (msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;left:50%;bottom:44px;transform:translateX(-50%);background:rgba(30,36,48,.92);color:#fff;padding:9px 18px;border-radius:10px;font-size:13px;z-index:99;border:1px solid rgba(255,255,255,.14);box-shadow:0 12px 30px rgba(0,0,0,.45);';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+};
+</script>
+</body>
+</html>

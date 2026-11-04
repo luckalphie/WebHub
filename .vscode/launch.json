@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:WebHub}",
+            "name": "Debug WebHub",
+            "target": "WebHub",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug WebHub"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:WebHub}",
+            "name": "Release WebHub",
+            "target": "WebHub",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release WebHub"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:WebHub}",
+            "name": "Debug WebHubRunner",
+            "target": "WebHubRunner",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug WebHubRunner"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:WebHub}",
+            "name": "Release WebHubRunner",
+            "target": "WebHubRunner",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release WebHubRunner"
+        }
+    ]
+}

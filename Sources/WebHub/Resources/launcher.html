@@ -178,6 +178,15 @@
   .field.icon-url-field { display: none; }
   .field.icon-url-field.visible { display: block; }
   .field .tip { font-size: 11px; color: rgba(255,255,255,.38); margin-top: 5px; }
+  .login-setting-row { display: flex; align-items: center; justify-content: space-between; }
+  .login-setting-title { font-size: 11.5px; color: rgba(255,255,255,.55); letter-spacing: .2px; }
+  .login-toggle { display: inline-flex !important; align-items: center; gap: 8px; margin: 0 !important; color: #eef2f8 !important; font-size: 12px !important; cursor: default; }
+  .login-toggle input { position: absolute; width: 1px; height: 1px; padding: 0; opacity: 0; pointer-events: none; }
+  .login-switch { width: 30px; height: 18px; border-radius: 10px; background: rgba(255,255,255,.22); position: relative; transition: background .16s; }
+  .login-switch::after { content: ''; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; border-radius: 50%; background: #fff; transition: transform .16s; }
+  .login-toggle input:checked + .login-switch { background: #3b82f6; }
+  .login-toggle input:checked + .login-switch::after { transform: translateX(12px); }
+  .login-toggle input:focus-visible + .login-switch { outline: 2px solid rgba(96,165,250,.8); outline-offset: 2px; }
 
   .swatches { display: flex; gap: 9px; }
   .swatch {
@@ -240,6 +249,18 @@
       <label>网址</label>
       <input id="fURL" placeholder="https://example.com" spellcheck="false">
       <div class="tip">不写协议会自动补 https://</div>
+    </div>
+    <div class="field">
+      <label>支持的域名</label>
+      <input id="fSupportedDomains" placeholder="example.com, docs.example.net" spellcheck="false">
+      <div class="tip">逗号分隔；域名及其子域名留在 WebHub，其他链接用默认浏览器打开。</div>
+    </div>
+    <div class="field">
+      <div class="login-setting-row">
+        <span class="login-setting-title">登录状态</span>
+        <label class="login-toggle"><input id="fIsolatedLogin" type="checkbox"><span class="login-switch"></span><span>独立保存</span></label>
+      </div>
+      <div class="tip">关闭时与其他 WebApp 共享；开启后需在此应用重新登录。</div>
     </div>
     <div class="field">
       <label>主题色</label>
@@ -414,6 +435,8 @@ document.querySelector('.gridwrap').addEventListener('contextmenu', (e) => {
 // ---------- 编辑弹窗 ----------
 const fName = document.getElementById('fName');
 const fURL = document.getElementById('fURL');
+const fSupportedDomains = document.getElementById('fSupportedDomains');
+const fIsolatedLogin = document.getElementById('fIsolatedLogin');
 const fIconURL = document.getElementById('fIconURL');
 const iconURLField = document.getElementById('iconURLField');
 const swatches = document.getElementById('swatches');
@@ -451,6 +474,8 @@ function openSheet(id) {
   sheetTitle.textContent = app ? '编辑应用' : '添加应用';
   fName.value = app ? app.name : '';
   fURL.value = app ? app.url : '';
+  fSupportedDomains.value = app ? (app.supportedDomains || '') : '';
+  fIsolatedLogin.checked = app ? !!app.isolatedLogin : false;
   fIconURL.value = app ? (app.iconURL || '') : '';
   chosenAccent = app ? app.accent : ACCENTS[0];
   selectIconMode(app ? (app.iconMode || 'website') : 'website');
@@ -474,9 +499,9 @@ btnSave.addEventListener('click', () => {
   }
   btnSave.disabled = true;
   if (editingId) {
-    post('update', { id: editingId, name, url, iconURL, accent: chosenAccent, iconMode: chosenIconMode });
+    post('update', { id: editingId, name, url, iconURL, accent: chosenAccent, iconMode: chosenIconMode, isolatedLogin: fIsolatedLogin.checked, supportedDomains: fSupportedDomains.value.trim() });
   } else {
-    post('add', { name, url, iconURL, accent: chosenAccent, iconMode: chosenIconMode });
+    post('add', { name, url, iconURL, accent: chosenAccent, iconMode: chosenIconMode, isolatedLogin: fIsolatedLogin.checked, supportedDomains: fSupportedDomains.value.trim() });
   }
   setTimeout(() => { btnSave.disabled = false; }, 400);
   closeSheet();

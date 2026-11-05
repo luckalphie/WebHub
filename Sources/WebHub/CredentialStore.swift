@@ -26,19 +26,20 @@ final class CredentialStore {
 
     private init() {}
 
-    /// 保存（同 host 覆盖）
+    /// 保存凭据；独立登录态使用 WebApp 专属的 Keychain service。
     @discardableResult
-    func save(host: String, username: String, password: String) -> Bool {
+    func save(host: String, username: String, password: String, appID: String? = nil) -> Bool {
         guard !host.isEmpty, !username.isEmpty else { return false }
         let cred = Credential(username: username, password: password)
         guard let data = try? JSONEncoder().encode(cred) else { return false }
+        let credentialService = serviceName(appID: appID)
 
         // 先删旧的，保证唯一
-        delete(host: host)
+        delete(host: host, appID: appID)
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: credentialService,
             kSecAttrAccount as String: host,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
@@ -47,11 +48,11 @@ final class CredentialStore {
         return status == errSecSuccess
     }
 
-    func load(host: String) -> Credential? {
+    func load(host: String, appID: String? = nil) -> Credential? {
         guard !host.isEmpty else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName(appID: appID),
             kSecAttrAccount as String: host,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
@@ -63,12 +64,21 @@ final class CredentialStore {
         return cred
     }
 
-    func delete(host: String) {
+    func delete(host: String, appID: String? = nil) {
         guard !host.isEmpty else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName(appID: appID),
             kSecAttrAccount as String: host
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// 删除指定 WebApp 专属的全部 Keychain 凭据。
+    func deleteAll(appID: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName(appID: appID)
         ]
         SecItemDelete(query as CFDictionary)
     }
@@ -113,14 +123,19 @@ final class CredentialStore {
     }
 
     /// 先按完整 host 找，找不到再按根域找（支持 SSO 跨子域）
-    func find(forHost host: String) -> (host: String, credential: Credential)? {
-        if let cred = load(host: host) {
+    func find(forHost host: String, appID: String? = nil) -> (host: String, credential: Credential)? {
+        if let cred = load(host: host, appID: appID) {
             return (host, cred)
         }
         let root = CredentialStore.registrableDomain(host)
-        if root != host, let cred = load(host: root) {
+        if root != host, let cred = load(host: root, appID: appID) {
             return (root, cred)
         }
         return nil
+    }
+
+    private func serviceName(appID: String?) -> String {
+        guard let appID = appID, !appID.isEmpty else { return service }
+        return "\(service).webapp.\(appID)"
     }
 }

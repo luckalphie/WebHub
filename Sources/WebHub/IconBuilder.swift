@@ -13,7 +13,7 @@ enum IconBuilder {
     static func composeIcon(glyph: NSImage?, accent: String, size: CGFloat = 1024) -> Data? {
         guard let rep = makeBitmap(size: size) else { return nil }
         draw(rep: rep, size: size, accent: accent) { rect in
-            guard let glyph = glyph, let prepared = squareGlyph(glyph: glyph, box: rect.width * 0.72) else { return false }
+            guard let glyph = glyph, let prepared = squareGlyph(glyph: glyph, box: rect.width) else { return false }
             let gx = rect.midX - prepared.size.width / 2
             let gy = rect.midY - prepared.size.height / 2
             prepared.draw(in: NSRect(x: gx, y: gy, width: prepared.size.width, height: prepared.size.height),

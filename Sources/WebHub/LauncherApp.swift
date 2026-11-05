@@ -132,6 +132,8 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             var item: [String: Any] = ["id": app.id, "name": app.name,
                                        "url": app.url, "accent": app.accent,
                                        "iconMode": app.effectiveIconMode.rawValue,
+                                       "isolatedLogin": app.usesIsolatedLogin,
+                                       "supportedDomains": app.supportedDomains?.joined(separator: ", ") ?? "",
                                        "iconURL": app.iconURL ?? ""]
             if app.effectiveIconMode == .website, let iconURL = store.iconURL(for: app) {
                 // 用 data URI 避免 file:// 权限问题
@@ -192,7 +194,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             let accent = body["accent"] as? String
             let iconURL = body["iconURL"] as? String
             let mode = (body["iconMode"] as? String).flatMap(SiteIconMode.init(rawValue:)) ?? .website
-            let app = store.add(name: name, url: url, iconURL: iconURL, accent: accent, iconMode: mode)
+            let isolatedLogin = body["isolatedLogin"] as? Bool ?? false
+            let supportedDomains = body["supportedDomains"] as? String
+            let app = store.add(name: name, url: url, iconURL: iconURL, accent: accent, iconMode: mode, isolatedLogin: isolatedLogin, supportedDomains: supportedDomains)
             refresh()
             if mode == .website {
                 fetchIcon(for: app, announce: true)
@@ -208,7 +212,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             let iconURL = body["iconURL"] as? String
             let accent = body["accent"] as? String
             let mode = (body["iconMode"] as? String).flatMap(SiteIconMode.init(rawValue:))
-            guard var updated = store.update(id: id, name: name, url: url, iconURL: iconURL, accent: accent, iconMode: mode) else { return }
+            let isolatedLogin = body["isolatedLogin"] as? Bool
+            let supportedDomains = body["supportedDomains"] as? String
+            guard var updated = store.update(id: id, name: name, url: url, iconURL: iconURL, accent: accent, iconMode: mode, isolatedLogin: isolatedLogin, supportedDomains: supportedDomains) else { return }
             let urlChanged = previous.url != updated.url
             let iconURLChanged = previous.iconURL != updated.iconURL
             if urlChanged || iconURLChanged {
@@ -225,6 +231,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
         case "delete":
             guard let id = body["id"] as? String else { return }
+            SiteWindowManager.shared.close(id)
             store.remove(id: id)
             refresh()
 
@@ -262,12 +269,13 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        CredentialStore.shared.delete(host: root)
-        if root != host { CredentialStore.shared.delete(host: host) }
+        let credentialScope = app.usesIsolatedLogin ? app.id : nil
+        CredentialStore.shared.delete(host: root, appID: credentialScope)
+        if root != host { CredentialStore.shared.delete(host: host, appID: credentialScope) }
 
         // 单宿主：所有窗口共用同一个数据仓库，直接清一次就全都没了，
         // 不需要再往共享池写墓碑通知「其它进程」。
-        SharedStorage.clearAll { [weak self] in
+        SharedStorage.clear(for: app) { [weak self] in
             self?.eval("window.hubToast('已清除 \(root) 的登录状态')")
         }
     }
@@ -310,12 +318,14 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     /// 把剪贴板文本插到当前聚焦的输入框（保留光标与选区语义）。
     private func installPasteShortcut() {
         _ = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // 本地事件监听覆盖整个宿主进程；站点窗口的粘贴必须交给它自己的 WKWebView。
+            guard let self = self, self.window.isKeyWindow else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard flags.contains(.command) || flags.contains(.control),
                   !flags.contains(.option),
                   (event.charactersIgnoringModifiers ?? "").caseInsensitiveCompare("v") == .orderedSame
             else { return event }
-            self?.pasteFromClipboard()
+            self.pasteFromClipboard()
             return nil
         }
     }

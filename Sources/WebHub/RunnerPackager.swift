@@ -104,7 +104,7 @@ enum RunnerPackager {
             .flatMap { try? Data(contentsOf: $0) }
             .map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } ?? ""
         // 图标绘制规则变化时更新版本，使已有站点包重新生成图标。
-        return "icon-v10|\(app.id)|\(app.name)|\(app.url)|\(app.iconURL ?? "")|\(app.accent)|\(app.effectiveIconMode.rawValue)|\(srcSize.intValue)|\(iconKey)"
+        return "icon-v13|\(app.id)|\(app.name)|\(app.url)|\(app.iconURL ?? "")|\(app.accent)|\(app.effectiveIconMode.rawValue)|\(srcSize.intValue)|\(iconKey)"
     }
 
     private static func stampURL(_ bundleURL: URL) -> URL {
@@ -195,9 +195,19 @@ enum RunnerPackager {
         let themedIcon = (app.effectiveIconMode == .website ? glyph.flatMap { IconBuilder.composeIcon(glyph: $0, accent: app.accent) } : nil)
             ?? IconBuilder.nameIcon(name: app.name, accent: app.accent)
         if let png = themedIcon {
-            let icnsURL = resDir.appendingPathComponent("AppIcon.icns")
+            let iconHash = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
+            iconName = "AppIcon-\(iconHash.prefix(12))"
+            let icnsURL = resDir.appendingPathComponent("\(iconName).icns")
             if IconBuilder.icns(fromPNG: png, to: icnsURL) {
-                iconName = "AppIcon"
+                // 图标文件名随内容变化，绕开 Launch Services 按 bundle 和路径复用的旧图标缓存。
+                if let resources = try? fm.contentsOfDirectory(at: resDir, includingPropertiesForKeys: nil) {
+                    for oldIcon in resources where oldIcon.lastPathComponent.hasPrefix("AppIcon-")
+                        && oldIcon.pathExtension == "icns" && oldIcon != icnsURL {
+                        try? fm.removeItem(at: oldIcon)
+                    }
+                }
+            } else {
+                iconName = ""
             }
         }
 

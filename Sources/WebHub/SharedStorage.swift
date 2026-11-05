@@ -3,8 +3,7 @@ import WebKit
 
 // MARK: - 共享存储
 //
-// 关键点：所有站点窗口必须用同一个 WKWebsiteDataStore，
-// 才能共享 cookie / localStorage / IndexedDB —— 也就是共享登录态。
+// 默认站点共用一个 WKWebsiteDataStore；启用独立登录态时按 WebApp ID 使用持久化仓库。
 
 enum SharedStorage {
 
@@ -63,17 +62,69 @@ enum SharedStorage {
         _ = identifier
     }
 
-    /// 共享数据仓库
-    static func dataStore() -> WKWebsiteDataStore {
+    /// 根据站点配置获取共享或独立的持久化数据仓库。
+    static func dataStore(for app: WebApp) -> WKWebsiteDataStore {
+        guard app.usesIsolatedLogin else { return sharedDataStore() }
+        if #available(macOS 14.0, *) {
+            let storeID = UUID(uuidString: app.id) ?? UUID()
+            return WKWebsiteDataStore(forIdentifier: storeID)
+        }
+        return sharedDataStore()
+    }
+
+    /// 清除指定站点所在仓库的全部网站数据。
+    static func clear(for app: WebApp, completion: (() -> Void)? = nil) {
+        clear(store: dataStore(for: app), completion: completion)
+    }
+
+    /// 清除共享登录态。
+    static func clearAll(completion: (() -> Void)? = nil) {
+        clear(store: sharedDataStore(), completion: completion)
+    }
+
+    /// 删除独立 WebApp 的网站数据仓库及其磁盘目录。
+    static func deletePersistentStore(for app: WebApp) {
+        guard app.usesIsolatedLogin,
+              let storeID = UUID(uuidString: app.id),
+              let directory = persistentStoreDirectory(for: storeID) else { return }
+
+        let store = dataStore(for: app)
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        if #available(macOS 14.0, *) {
+            Task {
+                await store.removeData(ofTypes: types, modifiedSince: .distantPast)
+                removeStoreFiles(at: directory)
+            }
+        } else {
+            store.removeData(ofTypes: types, modifiedSince: .distantPast) {
+                removeStoreFiles(at: directory)
+            }
+        }
+    }
+
+    private static func sharedDataStore() -> WKWebsiteDataStore {
         if #available(macOS 14.0, *) {
             return WKWebsiteDataStore(forIdentifier: identifier)
         }
         return .default()
     }
 
-    /// 清除全部登录态
-    static func clearAll(completion: (() -> Void)? = nil) {
-        let store = dataStore()
+    private static func persistentStoreDirectory(for identifier: UUID) -> URL? {
+        guard let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first else { return nil }
+        let bundleID = Bundle.main.bundleIdentifier ?? "cn.webhub.launcher"
+        return library
+            .appendingPathComponent("WebKit/\(bundleID)/WebsiteDataStore", isDirectory: true)
+            .appendingPathComponent(identifier.uuidString.lowercased(), isDirectory: true)
+    }
+
+    private static func removeStoreFiles(at directory: URL) {
+        // 等 WebKit 完成数据清理并释放当前数据仓库后再删目录，避免残留文件被重新写回。
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    private static func clear(store: WKWebsiteDataStore, completion: (() -> Void)?) {
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
         if #available(macOS 14.0, *) {
             Task {

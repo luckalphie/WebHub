@@ -44,7 +44,7 @@ final class SiteWindowManager {
         }
         guard let url = URL(string: app.url) else { return }
 
-        let wc = RunnerWindowController(appID: app.id, appName: app.name, url: url)
+        let wc = RunnerWindowController(app: app, url: url)
         wc.onWindowClosed = { [weak self] in
             self?.siteWindowDidClose(app.id)
         }

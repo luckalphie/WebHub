@@ -44,6 +44,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private let appID: String
     private let appName: String
     private let homeURL: URL
+    private let siteApp: WebApp
 
     private var window: NSWindow!
     private var topBar: NSView!
@@ -72,9 +73,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         return tabs[activeIndex]
     }
 
-    init(appID: String, appName: String, url: URL) {
-        self.appID = appID
-        self.appName = appName
+    init(app: WebApp, url: URL) {
+        self.siteApp = app
+        self.appID = app.id
+        self.appName = app.name
         self.homeURL = url
         super.init()
     }
@@ -330,7 +332,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         if let webView = tab.webView { return webView }
         let cfg = WKWebViewConfiguration()
         // 共享数据仓库：所有站点窗口互通 cookie / localStorage → 共享登录态
-        cfg.websiteDataStore = SharedStorage.dataStore()
+        cfg.websiteDataStore = SharedStorage.dataStore(for: siteApp)
         cfg.defaultWebpagePreferences.allowsContentJavaScript = true
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
 
@@ -778,13 +780,17 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         return result
     }
 
-    /// 主机名完全一致才算站内。
-    /// 子域也算出站——例如站点是 a.example.com，链到 b.example.com 同样交给默认浏览器。
+    /// 当前站点主机和配置的支持域名留在 WebHub；其余域名交给默认浏览器。
     private func isSameSite(_ host: String) -> Bool {
         let target = Self.normalizedHost(host)
         let site = Self.normalizedHost(siteHost)
-        guard !target.isEmpty, !site.isEmpty else { return false }
-        return target == site
+        guard !target.isEmpty else { return false }
+        if !site.isEmpty && target == site { return true }
+        let configuredApp = AppStore.shared.apps.first(where: { $0.id == appID }) ?? siteApp
+        return (configuredApp.supportedDomains ?? []).contains { rawDomain in
+            let domain = Self.normalizedHost(rawDomain)
+            return !domain.isEmpty && (target == domain || target.hasSuffix(".\(domain)"))
+        }
     }
 
     // MARK: 中转链接解包
@@ -944,7 +950,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         switch type {
         case "requestCredential":
             // 页面找到了登录框 → 用已保存的凭据自动填充
-            guard let found = store.find(forHost: host) else { return }
+            guard let found = store.find(forHost: host, appID: siteApp.usesIsolatedLogin ? appID : nil) else { return }
             let user = AutofillScript.jsLiteral(found.credential.username)
             let pass = AutofillScript.jsLiteral(found.credential.password)
             senderWebView?.evaluateJavaScript(
@@ -956,7 +962,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
                   !username.isEmpty, !password.isEmpty else { return }
             // 用根域保存，这样同域下所有子系统都能填
             let key = CredentialStore.registrableDomain(host)
-            store.save(host: key, username: username, password: password)
+            store.save(host: key, username: username, password: password, appID: siteApp.usesIsolatedLogin ? appID : nil)
             NSLog("WebHub: 已保存 \(key) 的登录凭据")
 
         default:

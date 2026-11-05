@@ -15,16 +15,21 @@ struct WebApp: Codable, Identifiable, Equatable {
     var iconURL: String?
     var accent: String
     var iconMode: SiteIconMode?
+    var isolatedLogin: Bool?
+    var supportedDomains: [String]?
     var effectiveIconMode: SiteIconMode { iconMode ?? .website }
+    var usesIsolatedLogin: Bool { isolatedLogin ?? false }
 
-    static func make(name: String, url: String, iconURL: String? = nil, accent: String? = nil, iconMode: SiteIconMode = .website) -> WebApp {
+    static func make(name: String, url: String, iconURL: String? = nil, accent: String? = nil, iconMode: SiteIconMode = .website, isolatedLogin: Bool = false, supportedDomains: [String] = []) -> WebApp {
         WebApp(id: UUID().uuidString.lowercased(),
                name: name,
                url: url,
                iconFile: nil,
                iconURL: iconURL?.isEmpty == false ? iconURL : nil,
                accent: accent ?? AccentPalette.defaultColor,
-               iconMode: iconMode)
+               iconMode: iconMode,
+               isolatedLogin: isolatedLogin,
+               supportedDomains: supportedDomains.isEmpty ? nil : supportedDomains)
     }
 }
 
@@ -132,29 +137,48 @@ final class AppStore {
 
     // MARK: 增删改
 
-    func add(name: String, url: String, iconURL: String? = nil, accent: String? = nil, iconMode: SiteIconMode = .website) -> WebApp {
+    func add(name: String, url: String, iconURL: String? = nil, accent: String? = nil, iconMode: SiteIconMode = .website, isolatedLogin: Bool = false, supportedDomains: String? = nil) -> WebApp {
         let normalizedIconURL = iconURL?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let app = WebApp.make(name: name, url: normalizedURL(url), iconURL: normalizedIconURL.map(normalizedURL), accent: accent, iconMode: iconMode)
+        let app = WebApp.make(name: name, url: normalizedURL(url), iconURL: normalizedIconURL.map(normalizedURL), accent: accent, iconMode: iconMode, isolatedLogin: isolatedLogin, supportedDomains: Self.normalizeSupportedDomains(supportedDomains))
         apps.append(app)
         save()
         return app
     }
 
     @discardableResult
-    func update(id: String, name: String?, url: String?, iconURL: String?, accent: String?, iconMode: SiteIconMode?) -> WebApp? {
+    func update(id: String, name: String?, url: String?, iconURL: String?, accent: String?, iconMode: SiteIconMode?, isolatedLogin: Bool?, supportedDomains: String?) -> WebApp? {
         guard let idx = apps.firstIndex(where: { $0.id == id }) else { return nil }
         if let name = name, !name.isEmpty { apps[idx].name = name }
         if let url = url, !url.isEmpty { apps[idx].url = normalizedURL(url) }
         if let iconURL = iconURL { apps[idx].iconURL = iconURL.isEmpty ? nil : normalizedURL(iconURL) }
         if let accent = accent { apps[idx].accent = accent }
         if let iconMode = iconMode { apps[idx].iconMode = iconMode }
+        if let isolatedLogin = isolatedLogin { apps[idx].isolatedLogin = isolatedLogin }
+        if let supportedDomains = supportedDomains {
+            apps[idx].supportedDomains = Self.normalizeSupportedDomains(supportedDomains)
+        }
         save()
         return apps[idx]
+    }
+
+    private static func normalizeSupportedDomains(_ raw: String?) -> [String] {
+        let domains = (raw ?? "").split(separator: ",").compactMap { item -> String? in
+            var domain = item.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if domain.hasPrefix("*.") { domain.removeFirst(2) }
+            while domain.hasSuffix(".") { domain.removeLast() }
+            return domain.isEmpty ? nil : domain
+        }
+        var seen = Set<String>()
+        return domains.filter { seen.insert($0).inserted }
     }
 
     func remove(id: String) {
         guard let idx = apps.firstIndex(where: { $0.id == id }) else { return }
         let app = apps[idx]
+        if app.usesIsolatedLogin {
+            SharedStorage.deletePersistentStore(for: app)
+            CredentialStore.shared.deleteAll(appID: app.id)
+        }
         apps.remove(at: idx)
         save()
         if let icon = app.iconFile {

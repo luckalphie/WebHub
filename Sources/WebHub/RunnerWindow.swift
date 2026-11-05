@@ -514,6 +514,14 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             holder.translatesAutoresizingMaskIntoConstraints = false
             holder.menu = tabContextMenu(for: tab.id)
 
+            // 标题和图标按钮之间、标签两侧的留白也要能切换标签。
+            let selectionButton = NSButton(title: "", target: self, action: #selector(tabClicked(_:)))
+            selectionButton.tag = i
+            selectionButton.menu = tabContextMenu(for: tab.id)
+            selectionButton.isBordered = false
+            selectionButton.translatesAutoresizingMaskIntoConstraints = false
+            holder.addSubview(selectionButton)
+
             let faviconButton = NSButton(title: "", target: self, action: #selector(tabClicked(_:)))
             faviconButton.tag = i
             faviconButton.menu = tabContextMenu(for: tab.id)
@@ -559,6 +567,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
                 preferredTabWidth,
                 holder.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
                 holder.heightAnchor.constraint(equalToConstant: 26),
+                selectionButton.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+                selectionButton.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
+                selectionButton.topAnchor.constraint(equalTo: holder.topAnchor),
+                selectionButton.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
                 faviconButton.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 7),
                 faviconButton.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
                 faviconButton.widthAnchor.constraint(equalToConstant: tab.favicon == nil ? 0 : 20),

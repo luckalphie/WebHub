@@ -11,6 +11,7 @@ final class TabItem {
     var favicon: NSImage?
     var faviconURL: String?
     var titleObservation: NSKeyValueObservation?
+    var urlObservation: NSKeyValueObservation?
     var unloadWork: DispatchWorkItem?
     var unloadDeadline: Date?
     fileprivate var tooltipOwner: TabToolTipOwner?
@@ -363,6 +364,19 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             if self.activeTab === tab { self.window.title = updated }
             self.rebuildTabBar()
         }
+        tab.urlObservation = wv.observe(\.url, options: [.new]) { [weak self, weak tab, weak wv] _, _ in
+            DispatchQueue.main.async { [weak self, weak tab, weak wv] in
+                guard let self = self, let tab = tab, let webView = wv,
+                      self.tabs.contains(where: { $0 === tab }), tab.webView === webView,
+                      let url = webView.url else { return }
+                tab.url = url
+                if self.activeTab === tab {
+                    self.updateAddress()
+                    self.updateToolbarState()
+                }
+                self.persistSession()
+            }
+        }
 
         wv.load(URLRequest(url: tab.url))
         return wv
@@ -375,6 +389,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         tab.url = webView.url ?? tab.url
         tab.titleObservation?.invalidate()
         tab.titleObservation = nil
+        tab.urlObservation?.invalidate()
+        tab.urlObservation = nil
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
@@ -421,6 +437,19 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         closeTab(at: index)
     }
 
+    @objc private func closeOtherTabsFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let keptTab = tabs.first(where: { $0.id == id }) else { return }
+        let otherTabs = tabs.filter { $0.id != id }
+        guard !otherTabs.isEmpty else { return }
+
+        otherTabs.forEach(unloadTab)
+        tabs = [keptTab]
+        activeIndex = 0
+        selectTab(0)
+        persistSession()
+    }
+
     @objc private func openTabInDefaultBrowser(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID,
               let tab = tabs.first(where: { $0.id == id }) else { return }
@@ -437,6 +466,12 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         openInBrowser.target = self
         openInBrowser.representedObject = id
         menu.addItem(openInBrowser)
+        menu.addItem(NSMenuItem.separator())
+        let closeOthers = NSMenuItem(title: "关闭其他标签页", action: #selector(closeOtherTabsFromMenu(_:)), keyEquivalent: "")
+        closeOthers.target = self
+        closeOthers.representedObject = id
+        closeOthers.isEnabled = tabs.count > 1
+        menu.addItem(closeOthers)
         let close = NSMenuItem(title: "关闭标签页", action: #selector(closeTabFromMenu(_:)), keyEquivalent: "")
         close.target = self
         close.representedObject = id

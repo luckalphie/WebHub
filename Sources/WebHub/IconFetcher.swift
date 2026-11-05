@@ -27,6 +27,18 @@ enum IconFetcher {
         }
     }
 
+    /// 下载用户指定的图标地址并转为 PNG。
+    static func fetchIcon(from iconURL: String, completion: @escaping (Data?) -> Void) {
+        guard let url = URL(string: iconURL),
+              let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+        downloadFirst(candidates: [url], index: 0) { data in
+            DispatchQueue.main.async { completion(data) }
+        }
+    }
+
     // MARK: - 内部
 
     private static func loadHTML(url: URL, completion: @escaping (String?, URL?) -> Void) {

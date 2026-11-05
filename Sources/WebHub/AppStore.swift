@@ -3,19 +3,28 @@ import AppKit
 
 // MARK: - 数据模型
 
+enum SiteIconMode: String, Codable {
+    case website, name
+}
+
 struct WebApp: Codable, Identifiable, Equatable {
     var id: String
     var name: String
     var url: String
     var iconFile: String?
+    var iconURL: String?
     var accent: String
+    var iconMode: SiteIconMode?
+    var effectiveIconMode: SiteIconMode { iconMode ?? .website }
 
-    static func make(name: String, url: String, accent: String? = nil) -> WebApp {
+    static func make(name: String, url: String, iconURL: String? = nil, accent: String? = nil, iconMode: SiteIconMode = .website) -> WebApp {
         WebApp(id: UUID().uuidString.lowercased(),
                name: name,
                url: url,
                iconFile: nil,
-               accent: accent ?? AccentPalette.defaultColor)
+               iconURL: iconURL?.isEmpty == false ? iconURL : nil,
+               accent: accent ?? AccentPalette.defaultColor,
+               iconMode: iconMode)
     }
 }
 
@@ -54,6 +63,7 @@ final class AppStore {
     let rootDir: URL
     let iconsDir: URL
     let runnerDir: URL
+    var legacyRunnerDir: URL { rootDir.appendingPathComponent("runners", isDirectory: true) }
     private var appsFile: URL { rootDir.appendingPathComponent("apps.json") }
     private var sessionsFile: URL { rootDir.appendingPathComponent("sessions.json") }
 
@@ -61,7 +71,7 @@ final class AppStore {
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         rootDir = base.appendingPathComponent("WebHub", isDirectory: true)
         iconsDir = rootDir.appendingPathComponent("icons", isDirectory: true)
-        runnerDir = rootDir.appendingPathComponent("runners", isDirectory: true)
+        runnerDir = fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/WebHub Apps", isDirectory: true)
         for dir in [rootDir, iconsDir, runnerDir] {
             try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
@@ -122,19 +132,22 @@ final class AppStore {
 
     // MARK: 增删改
 
-    func add(name: String, url: String, accent: String? = nil) -> WebApp {
-        var app = WebApp.make(name: name, url: normalizedURL(url), accent: accent)
+    func add(name: String, url: String, iconURL: String? = nil, accent: String? = nil, iconMode: SiteIconMode = .website) -> WebApp {
+        let normalizedIconURL = iconURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let app = WebApp.make(name: name, url: normalizedURL(url), iconURL: normalizedIconURL.map(normalizedURL), accent: accent, iconMode: iconMode)
         apps.append(app)
         save()
         return app
     }
 
     @discardableResult
-    func update(id: String, name: String?, url: String?, accent: String?) -> WebApp? {
+    func update(id: String, name: String?, url: String?, iconURL: String?, accent: String?, iconMode: SiteIconMode?) -> WebApp? {
         guard let idx = apps.firstIndex(where: { $0.id == id }) else { return nil }
         if let name = name, !name.isEmpty { apps[idx].name = name }
         if let url = url, !url.isEmpty { apps[idx].url = normalizedURL(url) }
+        if let iconURL = iconURL { apps[idx].iconURL = iconURL.isEmpty ? nil : normalizedURL(iconURL) }
         if let accent = accent { apps[idx].accent = accent }
+        if let iconMode = iconMode { apps[idx].iconMode = iconMode }
         save()
         return apps[idx]
     }

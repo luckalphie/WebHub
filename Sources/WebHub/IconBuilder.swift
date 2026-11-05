@@ -13,9 +13,7 @@ enum IconBuilder {
     static func composeIcon(glyph: NSImage?, accent: String, size: CGFloat = 1024) -> Data? {
         guard let rep = makeBitmap(size: size) else { return nil }
         draw(rep: rep, size: size, accent: accent) { rect in
-            guard let glyph = glyph, let prepared = squareGlyph(glyph: glyph, box: rect.width * 0.58) else {
-                return false
-            }
+            guard let glyph = glyph, let prepared = squareGlyph(glyph: glyph, box: rect.width * 0.72) else { return false }
             let gx = rect.midX - prepared.size.width / 2
             let gy = rect.midY - prepared.size.height / 2
             prepared.draw(in: NSRect(x: gx, y: gy, width: prepared.size.width, height: prepared.size.height),
@@ -25,20 +23,64 @@ enum IconBuilder {
         return png(from: rep)
     }
 
-    /// 首字母兜底图标
-    static func letterIcon(name: String, accent: String, size: CGFloat = 1024) -> Data? {
+    /// 中文可按字换行，英文只在空格处换行；最多显示两行。
+    static func nameIcon(name: String, accent: String, size: CGFloat = 1024) -> Data? {
         guard let rep = makeBitmap(size: size) else { return nil }
         draw(rep: rep, size: size, accent: accent) { rect in
-            let letter = String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
-            let text = letter.isEmpty ? "W" : letter
-            let font = NSFont.systemFont(ofSize: rect.width * 0.44, weight: .semibold)
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: accent.uppercased() == "#FFFFFF" ? NSColor.darkGray : NSColor.white.withAlphaComponent(0.96)
-            ]
-            let str = NSAttributedString(string: text, attributes: attrs)
-            let s = str.size()
-            str.draw(at: NSPoint(x: rect.midX - s.width / 2, y: rect.midY - s.height / 2))
+            var text = name.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+            if text.isEmpty { text = "Web" }
+            if text.count > 64 { text = String(text.prefix(63)) + "…" }
+            let words = text.split(separator: " ").map(String.init)
+            var lines: [String] = [text]
+            if words.count > 1 {
+                let split = (1..<words.count).min { left, right in
+                    abs(words[..<left].joined(separator: " ").count - words[left...].joined(separator: " ").count)
+                        < abs(words[..<right].joined(separator: " ").count - words[right...].joined(separator: " ").count)
+                }!
+                lines = [words[..<split].joined(separator: " "), words[split...].joined(separator: " ")]
+            } else if text.count > 3 && text.unicodeScalars.contains(where: { (0x3400...0x9FFF).contains($0.value) }) {
+                let characters = Array(text)
+                let middle = (characters.count + 1) / 2
+                lines = [String(characters[..<middle]), String(characters[middle...])]
+            }
+            let usesWhiteText = accent.uppercased() != "#FFFFFF"
+            let color = usesWhiteText ? NSColor.white.withAlphaComponent(0.96) : NSColor.darkGray
+            var fontSize = rect.width * 0.33
+            var attrs: [NSAttributedString.Key: Any] = [:]
+            var rendered: [NSAttributedString] = []
+            repeat {
+                attrs = [.font: NSFont.systemFont(ofSize: fontSize, weight: .semibold), .foregroundColor: color]
+                if usesWhiteText {
+                    let shadow = NSShadow()
+                    shadow.shadowColor = NSColor.black.withAlphaComponent(0.62)
+                    shadow.shadowBlurRadius = rect.width * 0.012
+                    shadow.shadowOffset = NSSize(width: 0, height: -rect.width * 0.004)
+                    attrs[.shadow] = shadow
+                }
+                rendered = lines.map { NSAttributedString(string: $0, attributes: attrs) }
+                if rendered.allSatisfy({ $0.size().width <= rect.width * 0.82 }) { break }
+                fontSize -= rect.width * 0.01
+            } while fontSize >= rect.width * 0.12
+            for index in rendered.indices where rendered[index].size().width > rect.width * 0.82 {
+                var shortened = lines[index]
+                let minimum = lines.count == 1 ? min(4, shortened.count) : min(2, shortened.count)
+                while shortened.count > minimum && rendered[index].size().width > rect.width * 0.82 {
+                    shortened.removeLast()
+                    rendered[index] = NSAttributedString(string: shortened + "…", attributes: attrs)
+                }
+                if rendered[index].size().width > rect.width * 0.82 {
+                    let ratio = rect.width * 0.82 / rendered[index].size().width
+                    var smallerAttrs = attrs
+                    smallerAttrs[.font] = NSFont.systemFont(ofSize: fontSize * ratio * 0.98, weight: .semibold)
+                    rendered[index] = NSAttributedString(string: shortened + (shortened.count < lines[index].count ? "…" : ""), attributes: smallerAttrs)
+                }
+            }
+            let lineHeight = rendered.map { $0.size().height }.max() ?? 0
+            let totalHeight = lineHeight * CGFloat(rendered.count)
+            for (index, line) in rendered.enumerated() {
+                let y = rect.midY + totalHeight / 2 - lineHeight * CGFloat(index + 1)
+                line.draw(at: NSPoint(x: rect.midX - line.size().width / 2, y: y))
+            }
             return true
         }
         return png(from: rep)
@@ -110,8 +152,11 @@ enum IconBuilder {
         guard let cg = glyph.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         let w = CGFloat(cg.width), h = CGFloat(cg.height)
         guard w > 0, h > 0 else { return nil }
-        let side = min(w, h)
-        let cropRect = CGRect(x: (w - side) / 2, y: (h - side) / 2, width: side, height: side)
+        let bounds = alphaBounds(of: cg) ?? CGRect(x: 0, y: 0, width: w, height: h)
+        let side = min(min(w, h), max(bounds.width, bounds.height) * 1.08)
+        let cropX = min(max(bounds.midX - side / 2, 0), w - side)
+        let cropY = min(max(bounds.midY - side / 2, 0), h - side)
+        let cropRect = CGRect(x: cropX, y: cropY, width: side, height: side)
         guard let cropped = cg.cropping(to: cropRect) else { return nil }
 
         let px = Int(box)
@@ -132,6 +177,41 @@ enum IconBuilder {
 
         guard let out = rep.representation(using: .png, properties: [:]) else { return nil }
         return NSImage(data: out)
+    }
+
+    /// 找到透明 PNG 的实际内容范围，避免图标自带留白导致合成后主体过小。
+    private static func alphaBounds(of image: CGImage) -> CGRect? {
+        guard image.alphaInfo != .none,
+              image.alphaInfo != .noneSkipFirst,
+              image.alphaInfo != .noneSkipLast,
+              let providerData = image.dataProvider?.data,
+              let bytes = CFDataGetBytePtr(providerData) else { return nil }
+        let bytesPerPixel = image.bitsPerPixel / 8
+        guard bytesPerPixel >= 4 else { return nil }
+        let alphaOffset: Int
+        switch image.alphaInfo {
+        case .first, .premultipliedFirst, .noneSkipFirst:
+            alphaOffset = 0
+        default:
+            alphaOffset = bytesPerPixel - 1
+        }
+        var minX = image.width
+        var minY = image.height
+        var maxX = -1
+        var maxY = -1
+        for y in 0..<image.height {
+            let row = bytes.advanced(by: y * image.bytesPerRow)
+            for x in 0..<image.width {
+                let alpha = row[x * bytesPerPixel + alphaOffset]
+                guard alpha > 8 else { continue }
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
     }
 
     static func gradientColors(for hex: String) -> (CGColor, CGColor) {

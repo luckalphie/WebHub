@@ -10,9 +10,9 @@ Swift + WebKit 实现。打包产物面向 **Apple Silicon**，最低系统要�
 
 ## 功能
 
-- **应用中心** —— 站点磁贴网格。填入名称和网址即可添加，favicon 自动抓取，也可以手动替换。
+- **应用中心** —— 站点磁贴网格。可选择生成名称图标，或使用网页图标；网页图标支持自动抓取和自定义图片 URL。合成图标会裁掉透明留白并放大主体。
 - **真实 Dock 图标** —— 每个站点生成独立 `.app` 和唯一 bundle 标识，因此在 Dock、启动台、应用切换器里都像一个原生应用。
-- **独立窗口** —— 每个站点在自己的窗口里打开，有标签页、前进 / 后退 / 刷新 / 主页按钮和可复制的只读地址栏。重新打开站点时可恢复已保存的标签。
+- **独立窗口** —— 每个站点在自己的窗口里打开，标签页显示随网页更新的 favicon，右键可用默认浏览器打开页面；悬停标签可查看完整标题和已加载后台标签的卸载倒计时。窗口还提供前进 / 后退 / 刷新 / 主页按钮和可复制的只读地址栏。
 - **共享登录态** —— 整个进程只有一个 `WKWebsiteDataStore`，cookie、`localStorage`、`IndexedDB`、Service Worker 全是**同一份数据**，不是定时同步的副本。
 - **密码自动填充** —— 凭据存在 macOS 钥匙串，在 document start 用原生 setter 加合成事件注入，React 和 Vue 的表单都能识别。
 - **按站点退出** —— 关掉某个站点的窗口（⌘Q 或红叉）只结束该站点、只移除它自己的 Dock 图标。退出应用中心才会全部退出。
@@ -64,10 +64,10 @@ WebHub.app（唯一真正干活的进程）
 
 | 路径 | 内容 |
 | --- | --- |
-| `~/Library/Application Support/WebHub/apps.json` | 站点列表：名称、网址、配色 |
+| `~/Library/Application Support/WebHub/apps.json` | 站点列表：名称、网址、图标来源、配色 |
 | `~/Library/Application Support/WebHub/sessions.json` | 各站点打开的标签 |
 | `~/Library/Application Support/WebHub/icons/` | 缓存的 favicon |
-| `~/Library/Application Support/WebHub/runners/` | 运行时生成的各站点 `.app` |
+| `~/Applications/WebHub Apps/` | 运行时生成的各站点 `.app` |
 | `~/Library/WebKit/cn.webhub.launcher/` | 共享数据仓库 —— 登录态就在这里 |
 | 钥匙串项 `cn.webhub.credentials` | 保存的用户名密码，按可注册域名一条 |
 
@@ -81,4 +81,5 @@ WebHub 不含遥测和统计。唯一的网络活动是加载你配置的站点�
 - 站点窗口共享同一个 WebHub 宿主进程，宿主崩溃或主线程卡死会影响所有站点。WebKit 使用独立内容进程，但不能保证每个站点都完全隔离。
 - WebHub 使用独立于 Safari 的网站数据仓库，不直接共享 Safari 的 Cookie 和登录态。
 - 重新打开站点时，WebHub 会尝试恢复该站点保存的标签页；退出 WebHub 后不会自动重新打开全部站点窗口。关闭最后一个标签页会清空该站点保存的会话。
+- 恢复的标签页在选中时加载。后台标签页闲置五分钟后会卸载，再次选中时重新加载；未保存的表单、页面状态、前进后退历史、媒体播放和实时连接可能丢失。
 - `Resources/WebHub.icns` 是直接入库的二进制文件，`sh tools/make-icon.sh` 会用 `tools/makeicon.swift` 里的绘制代码重新生成它。

@@ -10,9 +10,9 @@ This is an independent project and is not affiliated with Apple, Google, or any 
 
 ## Features
 
-- **Application center** — a grid of site tiles. Add a site by entering a name and a URL; the favicon is fetched automatically and can be replaced.
+- **Application center** — a grid of site tiles. Choose a generated name icon or a website icon, either fetched automatically or from a custom image URL. Generated icons crop transparent padding and scale the artwork to fit.
 - **Real Dock icons** — every configured site becomes its own `.app` with a unique bundle identifier, so it appears in the Dock, in Launchpad, and in the app switcher like a native application.
-- **Independent windows** — each site opens in its own window with tabs, back / forward / reload / home buttons, and a copyable, read-only address bar. Saved tabs can be restored when reopening the site.
+- **Independent windows** — each site opens in its own window with tabs, live website favicons, a tab menu for opening the page in the default browser, back / forward / reload / home buttons, and a copyable, read-only address bar. Hovering a tab shows its full title and, for loaded background tabs, the remaining time before unloading.
 - **Shared sign-in** — one `WKWebsiteDataStore` for the whole process, so cookies, `localStorage`, `IndexedDB`, and service workers are literally the same data across all sites. Not synchronized copies: the same file.
 - **Password autofill** — credentials are saved in the macOS Keychain and injected at document start with native setters and composed events, so React and Vue forms pick them up.
 - **Per-site quit** — quitting a site window (⌘Q or the red button) closes only that site and removes only its Dock icon. Quitting the application center quits everything.
@@ -64,10 +64,10 @@ Packaged builds are ad hoc signed and **not notarized**. macOS may refuse to ope
 
 | Path | Contents |
 | --- | --- |
-| `~/Library/Application Support/WebHub/apps.json` | Site list: name, URL, accent color |
+| `~/Library/Application Support/WebHub/apps.json` | Site list: name, URL, icon source, and accent color |
 | `~/Library/Application Support/WebHub/sessions.json` | Open tabs per site |
 | `~/Library/Application Support/WebHub/icons/` | Cached favicons |
-| `~/Library/Application Support/WebHub/runners/` | Generated per-site `.app` bundles |
+| `~/Applications/WebHub Apps/` | Generated per-site `.app` bundles |
 | `~/Library/WebKit/cn.webhub.launcher/` | The shared WebKit data store — this is where your sign-in state lives |
 | Keychain item `cn.webhub.credentials` | Saved usernames and passwords, one per registrable domain |
 
@@ -81,4 +81,5 @@ WebHub contains no telemetry and no analytics. Its only network activity is load
 - Site windows share one WebHub host process. A host crash or main-thread hang affects every site. WebKit uses separate content processes, but complete isolation between sites is not guaranteed.
 - WebHub uses its own website data store and does not directly share Safari's cookies or sign-in state.
 - WebHub attempts to restore a site's saved tabs when that site is reopened; exiting WebHub does not automatically reopen all site windows. Closing the last tab clears that site's saved session.
+- Restored tabs load when selected. A tab left in the background for five minutes is unloaded and reloads when selected again; unsaved form input, page state, navigation history, media playback, and live connections may be lost.
 - `Resources/WebHub.icns` is a checked-in binary; `sh tools/make-icon.sh` regenerates it from the drawing code in `tools/makeicon.swift`.

@@ -93,6 +93,12 @@
   .icon .letter {
     font-size: 31px; font-weight: 600; color: rgba(255,255,255,.96);
   }
+  .icon .icon-name {
+    max-width: 82%; overflow: hidden; text-align: center;
+    font-size: 18px; line-height: 1.15; font-weight: 600;
+  }
+  .icon .icon-name.white-text { text-shadow: 0 1px 3px rgba(0,0,0,.62); }
+  .icon-name-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .icon .badge {
     position: absolute; right: -5px; top: -5px;
     width: 13px; height: 13px; border-radius: 50%;
@@ -169,6 +175,8 @@
     -webkit-user-select: text; user-select: text;
   }
   .field input:focus { border-color: rgba(96,165,250,.85); background: rgba(255,255,255,.1); }
+  .field.icon-url-field { display: none; }
+  .field.icon-url-field.visible { display: block; }
   .field .tip { font-size: 11px; color: rgba(255,255,255,.38); margin-top: 5px; }
 
   .swatches { display: flex; gap: 9px; }
@@ -178,6 +186,9 @@
   }
   .swatch:hover { transform: scale(1.12); }
   .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.22); }
+  .icon-modes { display: flex; gap: 8px; }
+  .icon-modes button { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.07); color: #eef2f8; font: inherit; font-size: 12px; }
+  .icon-modes button.active { border-color: #60a5fa; background: rgba(59,130,246,.24); }
 
   .sheet-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }
   .btn {
@@ -234,6 +245,18 @@
       <label>主题色</label>
       <div class="swatches" id="swatches"></div>
     </div>
+    <div class="field">
+      <label>图标来源</label>
+      <div class="icon-modes" id="iconModes">
+        <button type="button" data-mode="website">网页图标</button>
+        <button type="button" data-mode="name">应用名称</button>
+      </div>
+    </div>
+    <div class="field icon-url-field" id="iconURLField">
+      <label>自定义图标 URL</label>
+      <input id="fIconURL" placeholder="https://example.com/icon.png" spellcheck="false">
+      <div class="tip">留空时自动获取网页图标</div>
+    </div>
     <div class="sheet-actions">
       <button class="btn" id="btnCancel">取消</button>
       <button class="btn primary" id="btnSave">保存</button>
@@ -251,6 +274,7 @@ const ACCENTS = ["#FFFFFF","#F06030","#3B82F6","#8B5CF6","#10B981","#F59E0B","#E
 let state = { apps: [], running: [] };
 let editingId = null;
 let chosenAccent = ACCENTS[0];
+let chosenIconMode = 'website';
 let menuTargetId = null;
 
 const grid = document.getElementById('grid');
@@ -262,6 +286,28 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   }[c]));
+}
+
+function iconNameLines(name) {
+  const text = (name || 'Web').trim().replace(/\s+/g, ' ') || 'Web';
+  const words = text.split(' ');
+  if (words.length > 1) {
+    let best = 1;
+    let difference = Infinity;
+    for (let i = 1; i < words.length; i++) {
+      const first = words.slice(0, i).join(' ');
+      const second = words.slice(i).join(' ');
+      const current = Math.abs(Array.from(first).length - Array.from(second).length);
+      if (current < difference) { best = i; difference = current; }
+    }
+    return [words.slice(0, best).join(' '), words.slice(best).join(' ')];
+  }
+  const characters = Array.from(text);
+  if (characters.length > 3 && /[\u3400-\u9fff]/u.test(text)) {
+    const middle = Math.ceil(characters.length / 2);
+    return [characters.slice(0, middle).join(''), characters.slice(middle).join('')];
+  }
+  return [text];
 }
 
 function render() {
@@ -286,9 +332,12 @@ function tile(app) {
   el.dataset.id = app.id;
   el.draggable = true;
 
-  const iconInner = app.icon
+  const nameLines = iconNameLines(app.name);
+  const longestLine = Math.max(...nameLines.map(line => Array.from(line).length));
+  const nameFontSize = longestLine >= 5 ? 12 : (longestLine === 4 ? 15 : 18);
+  const iconInner = app.iconMode !== 'name' && app.icon
     ? `<img src="${esc(app.icon)}" alt="">`
-    : `<div class="letter" style="color:${app.accent.toUpperCase() === '#FFFFFF' ? '#293142' : 'rgba(255,255,255,.96)'}">${esc((app.name || 'W').trim().slice(0,1).toUpperCase())}</div>`;
+    : `<div class="icon-name${app.accent.toUpperCase() === '#FFFFFF' ? '' : ' white-text'}" style="font-size:${nameFontSize}px;color:${app.accent.toUpperCase() === '#FFFFFF' ? '#293142' : 'rgba(255,255,255,.96)'}">${nameLines.map(line => `<span class="icon-name-line">${esc(line)}</span>`).join('')}</div>`;
 
   el.innerHTML = `
     <div class="icon" style="background:linear-gradient(160deg, ${esc(app.accent)}, ${esc(app.accent)}cc)">
@@ -332,6 +381,8 @@ document.addEventListener('click', (e) => {
 
 function showMenu(x, y, id) {
   menuTargetId = id;
+  const app = state.apps.find(a => a.id === id);
+  menu.querySelector('[data-act="reicon"]').style.display = app && app.iconMode === 'name' ? 'none' : '';
   menu.classList.add('show');
   const rect = menu.getBoundingClientRect();
   menu.style.left = Math.min(x, window.innerWidth - rect.width - 12) + 'px';
@@ -363,10 +414,25 @@ document.querySelector('.gridwrap').addEventListener('contextmenu', (e) => {
 // ---------- 编辑弹窗 ----------
 const fName = document.getElementById('fName');
 const fURL = document.getElementById('fURL');
+const fIconURL = document.getElementById('fIconURL');
+const iconURLField = document.getElementById('iconURLField');
 const swatches = document.getElementById('swatches');
 const btnSave = document.getElementById('btnSave');
 const btnCancel = document.getElementById('btnCancel');
 const sheetTitle = document.getElementById('sheetTitle');
+const iconModes = document.getElementById('iconModes');
+
+function selectIconMode(mode) {
+  chosenIconMode = mode;
+  iconURLField.classList.toggle('visible', mode === 'website');
+  iconModes.querySelectorAll('button').forEach(button => {
+    button.classList.toggle('active', button.dataset.mode === mode);
+  });
+}
+iconModes.addEventListener('click', e => {
+  const button = e.target.closest('button[data-mode]');
+  if (button) selectIconMode(button.dataset.mode);
+});
 
 function buildSwatches() {
   swatches.innerHTML = '';
@@ -385,7 +451,9 @@ function openSheet(id) {
   sheetTitle.textContent = app ? '编辑应用' : '添加应用';
   fName.value = app ? app.name : '';
   fURL.value = app ? app.url : '';
+  fIconURL.value = app ? (app.iconURL || '') : '';
   chosenAccent = app ? app.accent : ACCENTS[0];
+  selectIconMode(app ? (app.iconMode || 'website') : 'website');
   buildSwatches();
   mask.classList.add('show');
   setTimeout(() => (app ? fName : fName).focus(), 60);
@@ -399,15 +467,16 @@ mask.addEventListener('click', (e) => { if (e.target === mask) closeSheet(); });
 btnSave.addEventListener('click', () => {
   const name = fName.value.trim();
   const url = fURL.value.trim();
+  const iconURL = fIconURL.value.trim();
   if (!name || !url) {
     (name ? fURL : fName).focus();
     return;
   }
   btnSave.disabled = true;
   if (editingId) {
-    post('update', { id: editingId, name, url, accent: chosenAccent });
+    post('update', { id: editingId, name, url, iconURL, accent: chosenAccent, iconMode: chosenIconMode });
   } else {
-    post('add', { name, url, accent: chosenAccent });
+    post('add', { name, url, iconURL, accent: chosenAccent, iconMode: chosenIconMode });
   }
   setTimeout(() => { btnSave.disabled = false; }, 400);
   closeSheet();

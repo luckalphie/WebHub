@@ -39,34 +39,55 @@ enum RunnerPackager {
     static func bundleURL(for app: WebApp) -> URL {
         let dir = AppStore.shared.runnerDir
         let base = bundleName(for: app)
-        let primary = dir.appendingPathComponent("\(base).app")
-        // 同名不同站点：加短 ID 后缀，避免两站点抢同一目录
-        let plist = primary.appendingPathComponent("Contents/Info.plist")
-        if let data = try? Data(contentsOf: plist),
-           let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
-           let dict = obj as? [String: Any],
-           let existing = dict["WebHubAppID"] as? String,
-           existing != app.id {
-            return dir.appendingPathComponent("\(base)-\(app.id.prefix(6)).app")
+        // 保留已分配的同名冲突路径，避免其他应用删除后生成第二份站点包。
+        if let entries = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil),
+           let existing = entries.first(where: {
+               let name = $0.deletingPathExtension().lastPathComponent
+               return $0.pathExtension == "app" && (name == base || name.hasPrefix("\(base)-\(app.id)")) && appID(in: $0) == app.id
+           }) {
+            return existing
         }
-        return primary
+        var index = 0
+        while true {
+            let suffix = index == 0 ? "" : (index == 1 ? "-\(app.id)" : "-\(app.id)-\(index)")
+            let candidate = dir.appendingPathComponent("\(base)\(suffix).app")
+            if !FileManager.default.fileExists(atPath: candidate.path) || appID(in: candidate) == app.id {
+                return candidate
+            }
+            index += 1
+        }
     }
 
-    /// 老的「<UUID>.app」目录迁移成可读包名（只改名，不重签，很快）
+    private static func appID(in bundle: URL) -> String? {
+        let plist = bundle.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: plist),
+              let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let dict = obj as? [String: Any] else { return nil }
+        return dict["WebHubAppID"] as? String
+    }
+
+    /// 只迁移能确认属于现有站点的旧应用，不覆盖目标目录中的其他文件。
     static func migrateLegacyBundles() {
         let fm = FileManager.default
-        let dir = AppStore.shared.runnerDir
+        let store = AppStore.shared
+        let dirs = [store.legacyRunnerDir, store.runnerDir]
         var moved = false
-        for app in AppStore.shared.apps {
-            let legacy = dir.appendingPathComponent("\(app.id).app")
-            let target = bundleURL(for: app)
-            guard legacy.standardizedFileURL != target.standardizedFileURL,
-                  fm.fileExists(atPath: legacy.path),
-                  !fm.fileExists(atPath: target.path) else { continue }
-            deregister(legacy.path)
-            if (try? fm.moveItem(at: legacy, to: target)) != nil {
-                register(target.path)
-                moved = true
+        for dir in dirs {
+            guard let bundles = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
+            for legacy in bundles where legacy.pathExtension == "app" {
+                guard let id = appID(in: legacy),
+                      let app = store.apps.first(where: { $0.id == id }) else { continue }
+                let target = bundleURL(for: app)
+                guard legacy.standardizedFileURL != target.standardizedFileURL,
+                      !fm.fileExists(atPath: target.path) else { continue }
+                do {
+                    try fm.moveItem(at: legacy, to: target)
+                    deregister(legacy.path)
+                    register(target.path)
+                    moved = true
+                } catch {
+                    NSLog("[WebHub] 迁移站点应用失败：%@", error.localizedDescription)
+                }
             }
         }
         if moved { restartDock() }
@@ -82,7 +103,8 @@ enum RunnerPackager {
         let iconKey = AppStore.shared.iconURL(for: app)
             .flatMap { try? Data(contentsOf: $0) }
             .map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } ?? ""
-        return "\(app.id)|\(app.name)|\(app.url)|\(app.accent)|\(srcSize.intValue)|\(iconKey)"
+        // 图标绘制规则变化时更新版本，使已有站点包重新生成图标。
+        return "icon-v10|\(app.id)|\(app.name)|\(app.url)|\(app.iconURL ?? "")|\(app.accent)|\(app.effectiveIconMode.rawValue)|\(srcSize.intValue)|\(iconKey)"
     }
 
     private static func stampURL(_ bundleURL: URL) -> URL {
@@ -170,8 +192,8 @@ enum RunnerPackager {
         var iconName = ""
         let glyphData = iconPNG ?? store.iconURL(for: app).flatMap({ try? Data(contentsOf: $0) })
         let glyph = glyphData.flatMap { NSImage(data: $0) }
-        let themedIcon = glyph.flatMap { IconBuilder.composeIcon(glyph: $0, accent: app.accent) }
-            ?? IconBuilder.letterIcon(name: app.name, accent: app.accent)
+        let themedIcon = (app.effectiveIconMode == .website ? glyph.flatMap { IconBuilder.composeIcon(glyph: $0, accent: app.accent) } : nil)
+            ?? IconBuilder.nameIcon(name: app.name, accent: app.accent)
         if let png = themedIcon {
             let icnsURL = resDir.appendingPathComponent("AppIcon.icns")
             if IconBuilder.icns(fromPNG: png, to: icnsURL) {
@@ -255,6 +277,7 @@ enum RunnerPackager {
     static func removeApp(_ app: WebApp) {
         let dir = AppStore.shared.runnerDir
         for url in [dir.appendingPathComponent("\(app.id).app"), bundleURL(for: app)] {
+            guard appID(in: url) == app.id else { continue }
             deregister(url.path)
             try? FileManager.default.removeItem(at: url)
         }

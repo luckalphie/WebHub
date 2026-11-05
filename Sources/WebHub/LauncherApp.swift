@@ -130,8 +130,10 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         var items: [[String: Any]] = []
         for app in store.apps {
             var item: [String: Any] = ["id": app.id, "name": app.name,
-                                       "url": app.url, "accent": app.accent]
-            if let iconURL = store.iconURL(for: app) {
+                                       "url": app.url, "accent": app.accent,
+                                       "iconMode": app.effectiveIconMode.rawValue,
+                                       "iconURL": app.iconURL ?? ""]
+            if app.effectiveIconMode == .website, let iconURL = store.iconURL(for: app) {
                 // 用 data URI 避免 file:// 权限问题
                 if let data = try? Data(contentsOf: iconURL) {
                     item["icon"] = "data:image/png;base64," + data.base64EncodedString()
@@ -188,20 +190,36 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         case "add":
             guard let name = body["name"] as? String, let url = body["url"] as? String else { return }
             let accent = body["accent"] as? String
-            let app = store.add(name: name, url: url, accent: accent)
+            let iconURL = body["iconURL"] as? String
+            let mode = (body["iconMode"] as? String).flatMap(SiteIconMode.init(rawValue:)) ?? .website
+            let app = store.add(name: name, url: url, iconURL: iconURL, accent: accent, iconMode: mode)
             refresh()
-            fetchIcon(for: app, announce: true)
+            if mode == .website {
+                fetchIcon(for: app, announce: true)
+            } else {
+                _ = RunnerPackager.ensureApp(for: app, iconPNG: nil)
+            }
 
         case "update":
             guard let id = body["id"] as? String else { return }
             guard let previous = store.apps.first(where: { $0.id == id }) else { return }
             let name = body["name"] as? String
             let url = body["url"] as? String
+            let iconURL = body["iconURL"] as? String
             let accent = body["accent"] as? String
-            guard let updated = store.update(id: id, name: name, url: url, accent: accent) else { return }
-            refresh()
+            let mode = (body["iconMode"] as? String).flatMap(SiteIconMode.init(rawValue:))
+            guard var updated = store.update(id: id, name: name, url: url, iconURL: iconURL, accent: accent, iconMode: mode) else { return }
             let urlChanged = previous.url != updated.url
-            if urlChanged { fetchIcon(for: updated, announce: false) }
+            let iconURLChanged = previous.iconURL != updated.iconURL
+            if urlChanged || iconURLChanged {
+                store.clearIcon(id: id)
+                guard let current = store.apps.first(where: { $0.id == id }) else { return }
+                updated = current
+            }
+            refresh()
+            if updated.effectiveIconMode == .website && (urlChanged || iconURLChanged || store.iconURL(for: updated) == nil) {
+                fetchIcon(for: updated, announce: false)
+            }
             // 已打包过的 app 需要更新元数据
             _ = RunnerPackager.ensureApp(for: updated, iconPNG: nil)
 
@@ -212,7 +230,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
         case "reicon":
             guard let id = body["id"] as? String,
-                  let app = store.apps.first(where: { $0.id == id }) else { return }
+                  let app = store.apps.first(where: { $0.id == id }), app.effectiveIconMode == .website else { return }
             fetchIcon(for: app, announce: true)
 
         case "clearlogin":
@@ -257,10 +275,11 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     // MARK: 图标
 
     private func fetchIcon(for app: WebApp, announce: Bool) {
-        IconFetcher.fetch(for: app.url) { [weak self] png in
+        let completion: (Data?) -> Void = { [weak self] png in
             guard let self = self,
                   let current = AppStore.shared.apps.first(where: { $0.id == app.id }),
-                  current.url == app.url else { return }
+                  current.url == app.url, current.iconURL == app.iconURL,
+                  current.effectiveIconMode == .website else { return }
             if let png = png, let _ = AppStore.shared.setIcon(id: app.id, png: png) {
                 // 重新打包以更新 Dock 图标
                 if let updated = AppStore.shared.apps.first(where: { $0.id == app.id }) {
@@ -268,14 +287,19 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
                 }
                 self.refresh()
             } else {
-                // 兜底：字母图标
+                // 兜底：名称图标
                 AppStore.shared.clearIcon(id: current.id)
                 if let updated = AppStore.shared.apps.first(where: { $0.id == app.id }) {
                     _ = RunnerPackager.ensureApp(for: updated, iconPNG: nil)
                 }
                 self.refresh()
-                if announce { self.eval("window.hubToast('未能抓取网站图标，已使用字母图标')") }
+                if announce { self.eval("window.hubToast('未能抓取网站图标，已使用名称图标')") }
             }
+        }
+        if let iconURL = app.iconURL, !iconURL.isEmpty {
+            IconFetcher.fetchIcon(from: iconURL, completion: completion)
+        } else {
+            IconFetcher.fetch(for: app.url, completion: completion)
         }
     }
 

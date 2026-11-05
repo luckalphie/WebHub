@@ -5,15 +5,35 @@ import WebKit
 
 final class TabItem {
     let id = UUID()
-    let webView: WKWebView
+    var webView: WKWebView?
     var title: String
     var url: URL
+    var favicon: NSImage?
+    var faviconURL: String?
     var titleObservation: NSKeyValueObservation?
+    var unloadWork: DispatchWorkItem?
+    var unloadDeadline: Date?
+    fileprivate var tooltipOwner: TabToolTipOwner?
 
-    init(webView: WKWebView, title: String, url: URL) {
-        self.webView = webView
+    init(title: String, url: URL) {
         self.title = title
         self.url = url
+    }
+}
+
+private final class TabToolTipOwner: NSObject, NSViewToolTipOwner {
+    weak var controller: RunnerWindowController?
+    weak var tab: TabItem?
+
+    init(controller: RunnerWindowController, tab: TabItem) {
+        self.controller = controller
+        self.tab = tab
+    }
+
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint,
+              userData data: UnsafeMutableRawPointer?) -> String {
+        guard let controller = controller, let tab = tab else { return "" }
+        return controller.tooltipText(for: tab)
     }
 }
 
@@ -42,6 +62,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private var running = false
     private var isClamping = false
     private var changingFullScreen = false
+    /// 后台标签闲置 5 分钟后卸载，切回时重新加载。
+    private let backgroundTabTimeout: TimeInterval = 5 * 60
     /// 本站点窗口专属菜单，等窗口成为 key 时才挂到全局
     private var siteMenu: NSMenu?
 
@@ -294,6 +316,18 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     @discardableResult
     private func addTab(url: URL, activate: Bool) -> TabItem {
+        let tab = TabItem(title: url.host ?? "加载中…", url: url)
+        tabs.append(tab)
+        if activate {
+            selectTab(tabs.count - 1)
+        } else {
+            rebuildTabBar()
+        }
+        return tab
+    }
+
+    private func loadTab(_ tab: TabItem) -> WKWebView {
+        if let webView = tab.webView { return webView }
         let cfg = WKWebViewConfiguration()
         // 共享数据仓库：所有站点窗口互通 cookie / localStorage → 共享登录态
         cfg.websiteDataStore = SharedStorage.dataStore()
@@ -301,8 +335,12 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
 
         // 自动填充脚本
-        let host = url.host ?? ""
+        let host = tab.url.host ?? ""
         cfg.userContentController.addUserScript(AutofillScript.make(host: host))
+        cfg.userContentController.addUserScript(WKUserScript(
+            source: Self.faviconObserverScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true))
         cfg.userContentController.add(self, name: "autofill")
         cfg.userContentController.add(self, name: "tab")
 
@@ -312,8 +350,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         wv.allowsBackForwardNavigationGestures = true
         wv.translatesAutoresizingMaskIntoConstraints = false
 
-        let tab = TabItem(webView: wv, title: "加载中…", url: url)
-        tabs.append(tab)
+        tab.webView = wv
         tab.titleObservation = wv.observe(\.title, options: [.new]) { [weak self, weak tab] webView, _ in
             guard let self = self, let tab = tab,
                   self.tabs.contains(where: { $0 === tab }) else { return }
@@ -325,13 +362,39 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             self.rebuildTabBar()
         }
 
-        wv.load(URLRequest(url: url))
-        if activate {
-            selectTab(tabs.count - 1)
-        } else {
-            rebuildTabBar()
+        wv.load(URLRequest(url: tab.url))
+        return wv
+    }
+
+    private func unloadTab(_ tab: TabItem) {
+        tab.unloadWork?.cancel()
+        tab.unloadWork = nil
+        guard let webView = tab.webView else { return }
+        tab.url = webView.url ?? tab.url
+        tab.titleObservation?.invalidate()
+        tab.titleObservation = nil
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "autofill")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "tab")
+        webView.removeFromSuperview()
+        tab.webView = nil
+        tab.unloadDeadline = nil
+    }
+
+    private func scheduleTabUnload(_ tab: TabItem) {
+        tab.unloadWork?.cancel()
+        guard tab.webView != nil else { return }
+        tab.unloadDeadline = Date().addingTimeInterval(backgroundTabTimeout)
+        let work = DispatchWorkItem { [weak self, weak tab] in
+            guard let self = self, let tab = tab,
+                  self.tabs.contains(where: { $0 === tab }), self.activeTab !== tab else { return }
+            self.unloadTab(tab)
+            self.persistSession()
         }
-        return tab
+        tab.unloadWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + backgroundTabTimeout, execute: work)
     }
 
     /// 标签关闭按钮 + 切换
@@ -346,7 +409,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     @objc private func duplicateTabFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID,
               let tab = tabs.first(where: { $0.id == id }) else { return }
-        addTab(url: tab.webView.url ?? tab.url, activate: true)
+        addTab(url: tab.webView?.url ?? tab.url, activate: true)
         persistSession()
     }
 
@@ -356,12 +419,22 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         closeTab(at: index)
     }
 
+    @objc private func openTabInDefaultBrowser(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let tab = tabs.first(where: { $0.id == id }) else { return }
+        NSWorkspace.shared.open(tab.webView?.url ?? tab.url)
+    }
+
     private func tabContextMenu(for id: UUID) -> NSMenu {
         let menu = NSMenu()
         let duplicate = NSMenuItem(title: "复制标签页", action: #selector(duplicateTabFromMenu(_:)), keyEquivalent: "")
         duplicate.target = self
         duplicate.representedObject = id
         menu.addItem(duplicate)
+        let openInBrowser = NSMenuItem(title: "用默认浏览器打开", action: #selector(openTabInDefaultBrowser(_:)), keyEquivalent: "")
+        openInBrowser.target = self
+        openInBrowser.representedObject = id
+        menu.addItem(openInBrowser)
         let close = NSMenuItem(title: "关闭标签页", action: #selector(closeTabFromMenu(_:)), keyEquivalent: "")
         close.target = self
         close.representedObject = id
@@ -371,33 +444,37 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     private func selectTab(_ index: Int) {
         guard tabs.indices.contains(index) else { return }
+        let previous = activeTab
+        let tab = tabs[index]
+        if let previous = previous, previous !== tab { scheduleTabUnload(previous) }
         activeIndex = index
+        tab.unloadWork?.cancel()
+        tab.unloadWork = nil
+        tab.unloadDeadline = nil
 
         contentHost.subviews.forEach { $0.removeFromSuperview() }
-        let tab = tabs[index]
-        tab.webView.translatesAutoresizingMaskIntoConstraints = false
-        contentHost.addSubview(tab.webView)
+        let webView = loadTab(tab)
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        contentHost.addSubview(webView)
         NSLayoutConstraint.activate([
-            tab.webView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
-            tab.webView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
-            tab.webView.topAnchor.constraint(equalTo: contentHost.topAnchor),
-            tab.webView.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor)
+            webView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor)
         ])
 
         rebuildTabBar()
         updateAddress()
         updateToolbarState()
         window.title = tab.title
+        persistSession()
     }
 
     private func closeTab(at index: Int) {
         guard tabs.indices.contains(index) else { return }
+        let selected = activeTab
         let tab = tabs.remove(at: index)
-        tab.titleObservation?.invalidate()
-        tab.titleObservation = nil
-        tab.webView.configuration.userContentController.removeScriptMessageHandler(forName: "tab")
-        tab.webView.stopLoading()
-        tab.webView.removeFromSuperview()
+        unloadTab(tab)
 
         // 最后一个标签关掉 = 关窗口；applicationShouldTerminateAfterLastWindowClosed
         // 会让整个进程一起退出，Dock 图标也随之消失
@@ -410,7 +487,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             return
         }
 
-        let newIndex = min(index, tabs.count - 1)
+        let newIndex = selected.flatMap { selected in tabs.firstIndex(where: { $0 === selected }) } ?? min(index, tabs.count - 1)
+        activeIndex = newIndex
         selectTab(newIndex)
         persistSession()
     }
@@ -436,10 +514,22 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             holder.translatesAutoresizingMaskIntoConstraints = false
             holder.menu = tabContextMenu(for: tab.id)
 
+            let faviconButton = NSButton(title: "", target: self, action: #selector(tabClicked(_:)))
+            faviconButton.tag = i
+            faviconButton.menu = tabContextMenu(for: tab.id)
+            faviconButton.isBordered = false
+            faviconButton.image = tab.favicon
+            faviconButton.imagePosition = .imageOnly
+            faviconButton.imageScaling = .scaleProportionallyDown
+            faviconButton.isHidden = tab.favicon == nil
+            faviconButton.translatesAutoresizingMaskIntoConstraints = false
+            holder.addSubview(faviconButton)
+
             let titleBtn = NSButton(title: tab.title, target: self, action: #selector(tabClicked(_:)))
             titleBtn.tag = i
             titleBtn.menu = tabContextMenu(for: tab.id)
             titleBtn.isBordered = false
+            titleBtn.alignment = .left
             titleBtn.font = NSFont.systemFont(ofSize: 12, weight: i == activeIndex ? .medium : .regular)
             titleBtn.contentTintColor = i == activeIndex ? .labelColor : .secondaryLabelColor
             titleBtn.lineBreakMode = .byTruncatingTail
@@ -458,6 +548,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             closeBtn.contentTintColor = .tertiaryLabelColor
             closeBtn.translatesAutoresizingMaskIntoConstraints = false
             holder.addSubview(closeBtn)
+            holder.removeAllToolTips()
+            let tooltipOwner = TabToolTipOwner(controller: self, tab: tab)
+            tab.tooltipOwner = tooltipOwner
+            holder.addToolTip(NSRect(x: 0, y: 0, width: 220, height: 26), owner: tooltipOwner, userData: nil)
 
             let preferredTabWidth = holder.widthAnchor.constraint(equalToConstant: 220)
             preferredTabWidth.priority = .defaultLow
@@ -465,7 +559,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
                 preferredTabWidth,
                 holder.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
                 holder.heightAnchor.constraint(equalToConstant: 26),
-                titleBtn.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 9),
+                faviconButton.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 7),
+                faviconButton.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
+                faviconButton.widthAnchor.constraint(equalToConstant: tab.favicon == nil ? 0 : 20),
+                faviconButton.heightAnchor.constraint(equalToConstant: 20),
+                titleBtn.leadingAnchor.constraint(equalTo: faviconButton.trailingAnchor, constant: tab.favicon == nil ? 2 : 4),
                 titleBtn.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
                 titleBtn.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -4),
                 closeBtn.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -5),
@@ -477,9 +575,51 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         }
     }
 
+    fileprivate func tooltipText(for tab: TabItem) -> String {
+        var tooltip = tab.title
+        if tab.webView != nil, tab !== activeTab, let deadline = tab.unloadDeadline {
+            let seconds = max(0, Int(ceil(deadline.timeIntervalSinceNow)))
+            tooltip += "\n将在 \(seconds / 60):\(String(format: "%02d", seconds % 60)) 后释放网页"
+        }
+        return tooltip
+    }
+
+    private static let faviconObserverScript = """
+    (() => {
+      const send = () => {
+        const links = Array.from(document.querySelectorAll('link[rel]'))
+          .filter(link => /(^|\\s)(icon|shortcut icon|apple-touch-icon)(\\s|$)/i.test(link.rel) && link.href);
+        const link = links.find(item => /apple-touch-icon/i.test(item.rel)) || links[0];
+        if (link && window.webkit?.messageHandlers?.tab) {
+          window.webkit.messageHandlers.tab.postMessage({type: 'favicon', url: link.href});
+        }
+      };
+      window.__webhubRefreshFavicon = send;
+      send();
+      new MutationObserver(send).observe(document.documentElement, {
+        subtree: true, childList: true, attributes: true, attributeFilter: ['rel', 'href']
+      });
+    })();
+    """
+
+    private func updateFavicon(for webView: WKWebView, url: String) {
+        guard let tab = tabs.first(where: { $0.webView === webView }),
+              let iconURL = URL(string: url),
+              ["http", "https"].contains(iconURL.scheme?.lowercased() ?? "") else { return }
+        let requestedURL = iconURL.absoluteString
+        tab.faviconURL = requestedURL
+        IconFetcher.fetchIcon(from: requestedURL) { [weak self, weak tab, weak webView] png in
+            guard let self = self, let tab = tab, let webView = webView,
+                  self.tabs.contains(where: { $0 === tab }), tab.webView === webView,
+                  tab.faviconURL == requestedURL else { return }
+            tab.favicon = png.flatMap(NSImage.init(data:))
+            self.rebuildTabBar()
+        }
+    }
+
     private func updateAddress() {
         guard let tab = activeTab else { return }
-        addressField.stringValue = tab.webView.url?.absoluteString ?? tab.url.absoluteString
+        addressField.stringValue = tab.webView?.url?.absoluteString ?? tab.url.absoluteString
     }
 
     private func updateToolbarState() {
@@ -489,23 +629,23 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     private func persistSession() {
-        let urls = tabs.map { $0.webView.url?.absoluteString ?? $0.url.absoluteString }
+        let urls = tabs.map { $0.webView?.url?.absoluteString ?? $0.url.absoluteString }
         guard !urls.isEmpty else { return }
         AppStore.shared.saveSession(TabSession(urls: urls, activeIndex: activeIndex), for: appID)
     }
 
     // MARK: 动作
 
-    @objc private func goBack() { activeTab?.webView.goBack() }
-    @objc private func goForward() { activeTab?.webView.goForward() }
-    @objc private func goHome() { activeTab?.webView.load(URLRequest(url: homeURL)) }
+    @objc private func goBack() { activeTab?.webView?.goBack() }
+    @objc private func goForward() { activeTab?.webView?.goForward() }
+    @objc private func goHome() { activeTab?.webView?.load(URLRequest(url: homeURL)) }
     @objc private func reload() {
         guard let wv = activeTab?.webView else { return }
         if wv.url == nil { wv.load(URLRequest(url: homeURL)) } else { wv.reload() }
     }
 
     @objc private func newTab() {
-        let url = activeTab.map { $0.webView.url ?? $0.url } ?? homeURL
+        let url = activeTab.map { $0.webView?.url ?? $0.url } ?? homeURL
         addTab(url: url, activate: true)
         persistSession()
     }
@@ -725,6 +865,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         if tabs.indices.contains(activeIndex), tabs[activeIndex].webView === webView {
             window.title = tab.title
         }
+        webView.evaluateJavaScript("window.__webhubRefreshFavicon?.()", completionHandler: nil)
         rebuildTabBar()
         persistSession()
     }
@@ -771,11 +912,20 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) {
+        if message.name == "tab",
+           message.frameInfo.isMainFrame,
+           let body = message.body as? [String: Any],
+           body["type"] as? String == "favicon",
+           let url = body["url"] as? String,
+           let webView = message.webView {
+            updateFavicon(for: webView, url: url)
+            return
+        }
         guard message.name == "autofill",
               let body = message.body as? [String: Any],
               let type = body["type"] as? String else { return }
 
-        let host = (body["host"] as? String) ?? activeTab?.webView.url?.host ?? ""
+        let host = (body["host"] as? String) ?? activeTab?.webView?.url?.host ?? ""
         let senderWebView = message.webView
         let store = CredentialStore.shared
 
@@ -807,6 +957,9 @@ extension RunnerWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         persistWindowFrame()
         persistSession()
+        NotificationCenter.default.removeObserver(self)
+        for tab in tabs { unloadTab(tab) }
+        tabs.removeAll()
         // 单宿主：窗口没了就告诉 manager，让它收掉本站点的 shim 与 Dock 图标
         onWindowClosed?()
     }

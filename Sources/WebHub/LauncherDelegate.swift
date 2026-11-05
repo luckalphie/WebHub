@@ -5,7 +5,7 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         SharedStorage.warmUp()
-        // 老版本的站点包目录名是 UUID，Dock 悬停会显示成乱码；这里统一改成站点名
+        // 把旧目录中的站点包迁移到用户的应用程序目录。
         RunnerPackager.migrateLegacyBundles()
 
         // 单宿主：先起 IPC 端口，等各站点 shim 来「请我开窗」
@@ -35,7 +35,7 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
 
         // 把各站点包刷新到当前版本。
         //
-        // 升级、换安装位置之后，`Application Support/WebHub/runners/` 里躺着的还是
+        // 升级、换安装位置之后，站点应用目录里躺着的可能还是
         // 上一版的 shim，`WebHubHostPath` 也可能指向旧路径 —— 用户若直接从 Dock 点
         // 站点图标（不经过应用中心），就会用到过期的那份。这里逐个校正一遍。
         // ensureApp 有指纹幂等，没变化时几乎不花时间；串行 + 间隔是为了不卡住启动。

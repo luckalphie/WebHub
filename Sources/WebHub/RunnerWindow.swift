@@ -42,7 +42,7 @@ private final class TabToolTipOwner: NSObject, NSViewToolTipOwner {
 
 final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
 
-    private let appID: String
+    let appID: String
     private let appName: String
     private let homeURL: URL
     private let siteApp: WebApp
@@ -51,6 +51,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private var topBar: NSView!
     private var tabBar: NSView!
     private var tabStack: NSStackView!
+    var bookmarkIcons: [String: NSImage] = [:]
+    var bookmarkIconRequests: Set<String> = []
+    private var bookmarkBar: NSScrollView!
+    var bookmarkStack: NSStackView!
     private var contentHost: NSView!
     private var addressField: NSTextField!
     private var backButton: NSButton!
@@ -59,7 +63,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private var reloadButton: NSButton!
     private var newTabButton: NSButton!
 
-    private var tabs: [TabItem] = []
+    var tabs: [TabItem] = []
     private var activeIndex = 0
     private var running = false
     private var isClamping = false
@@ -218,6 +222,19 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         tabStack.setHuggingPriority(.defaultLow, for: .horizontal)
         tabBar.addSubview(tabStack)
 
+        bookmarkBar = NSScrollView()
+        bookmarkBar.translatesAutoresizingMaskIntoConstraints = false
+        bookmarkBar.hasHorizontalScroller = true
+        bookmarkBar.autohidesScrollers = true
+        bookmarkBar.drawsBackground = false
+        root.addSubview(bookmarkBar)
+        bookmarkStack = NSStackView()
+        bookmarkStack.orientation = .horizontal
+        bookmarkStack.alignment = .centerY
+        bookmarkStack.spacing = 6
+        bookmarkBar.documentView = bookmarkStack
+        refreshBookmarks()
+
         // 内容区
         contentHost = NSView()
         contentHost.translatesAutoresizingMaskIntoConstraints = false
@@ -241,9 +258,13 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             tabStack.trailingAnchor.constraint(lessThanOrEqualTo: tabBar.trailingAnchor, constant: -10),
             tabStack.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor, constant: 2),
 
+            bookmarkBar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
+            bookmarkBar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
+            bookmarkBar.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            bookmarkBar.heightAnchor.constraint(equalToConstant: 32),
             contentHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             contentHost.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            contentHost.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            contentHost.topAnchor.constraint(equalTo: bookmarkBar.bottomAnchor),
             contentHost.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         ])
     }
@@ -318,7 +339,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     // MARK: 标签管理
 
     @discardableResult
-    private func addTab(url: URL, activate: Bool) -> TabItem {
+    func addTab(url: URL, activate: Bool) -> TabItem {
         let tab = TabItem(title: url.host ?? "加载中…", url: url)
         tabs.append(tab)
         if activate {
@@ -458,6 +479,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     private func tabContextMenu(for id: UUID) -> NSMenu {
         let menu = NSMenu()
+        let bookmark = NSMenuItem(title: "收藏此页面", action: #selector(bookmarkTab(_:)), keyEquivalent: "")
+        bookmark.target = self
+        bookmark.representedObject = id
+        menu.addItem(bookmark)
         let duplicate = NSMenuItem(title: "复制标签页", action: #selector(duplicateTabFromMenu(_:)), keyEquivalent: "")
         duplicate.target = self
         duplicate.representedObject = id
@@ -677,7 +702,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         forwardButton?.isEnabled = wv?.canGoForward ?? false
     }
 
-    private func persistSession() {
+    func persistSession() {
         let urls = tabs.map { $0.webView?.url?.absoluteString ?? $0.url.absoluteString }
         guard !urls.isEmpty else { return }
         AppStore.shared.saveSession(TabSession(urls: urls, activeIndex: activeIndex), for: appID)

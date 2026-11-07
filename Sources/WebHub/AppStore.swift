@@ -52,6 +52,12 @@ enum AccentPalette {
 }
 
 /// 标签页会话（用于下次打开时恢复）
+struct Bookmark: Codable {
+    var id: UUID
+    var title: String
+    var url: String
+}
+
 struct TabSession: Codable {
     var urls: [String]
     var activeIndex: Int
@@ -223,6 +229,32 @@ final class AppStore {
         guard let name = app.iconFile else { return nil }
         let url = iconsDir.appendingPathComponent(name)
         return fm.fileExists(atPath: url.path) ? url : nil
+    }
+
+    // MARK: 收藏
+
+    private var bookmarksFile: URL { rootDir.appendingPathComponent("bookmarks.json") }
+    private var bookmarksBackupFile: URL { backupDir.appendingPathComponent("bookmarks-backup.json") }
+
+    private func allBookmarks() -> [String: [Bookmark]] {
+        for file in [bookmarksFile, bookmarksBackupFile] {
+            if let data = try? Data(contentsOf: file),
+               let items = try? JSONDecoder().decode([String: [Bookmark]].self, from: data) {
+                return items
+            }
+        }
+        return [:]
+    }
+
+    func bookmarks(for id: String) -> [Bookmark] { allBookmarks()[id] ?? [] }
+
+    func saveBookmarks(_ bookmarks: [Bookmark], for id: String) throws {
+        var all = allBookmarks()
+        all[id] = bookmarks
+        let data = try JSONEncoder().encode(all)
+        try fm.createDirectory(at: rootDir, withIntermediateDirectories: true)
+        try data.write(to: bookmarksFile, options: .atomic)
+        try data.write(to: bookmarksBackupFile, options: .atomic)
     }
 
     // MARK: 会话

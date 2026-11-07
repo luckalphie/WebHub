@@ -292,11 +292,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private func buildToolbar() {
         guard let topBar = self.topBar else { return }
 
-        backButton = toolbarButton("chevron.left", "后退", #selector(goBack))
-        forwardButton = toolbarButton("chevron.right", "前进", #selector(goForward))
-        homeButton = toolbarButton("house", "主页", #selector(goHome))
-        reloadButton = toolbarButton("arrow.clockwise", "刷新", #selector(reload))
-        newTabButton = toolbarButton("plus", "复制当前标签页", #selector(newTab))
+        backButton = toolbarButton("chevron.left", WebHubLanguage.text("Back"), #selector(goBack))
+        forwardButton = toolbarButton("chevron.right", WebHubLanguage.text("Forward"), #selector(goForward))
+        homeButton = toolbarButton("house", WebHubLanguage.text("Home"), #selector(goHome))
+        reloadButton = toolbarButton("arrow.clockwise", WebHubLanguage.text("Reload"), #selector(reload))
+        newTabButton = toolbarButton("plus", WebHubLanguage.text("Duplicate Current Tab"), #selector(newTab))
 
         let buttons = [backButton!, forwardButton!, homeButton!, reloadButton!]
         for b in buttons { topBar.addSubview(b) }
@@ -360,7 +360,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     @discardableResult
     func addTab(url: URL, activate: Bool) -> TabItem {
-        let tab = TabItem(title: url.host ?? "加载中…", url: url)
+        let tab = TabItem(title: url.host ?? WebHubLanguage.text("Loading…"), url: url)
         tabs.append(tab)
         if activate {
             selectTab(tabs.count - 1)
@@ -399,7 +399,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             guard let self = self, let tab = tab,
                   self.tabs.contains(where: { $0 === tab }) else { return }
             let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let updated = (title?.isEmpty == false ? title : nil) ?? webView.url?.host ?? tab.url.host ?? "加载中…"
+            let updated = (title?.isEmpty == false ? title : nil) ?? webView.url?.host ?? tab.url.host ?? WebHubLanguage.text("Loading…")
             guard tab.title != updated else { return }
             tab.title = updated
             if self.activeTab === tab { self.window.title = updated }
@@ -499,25 +499,25 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     private func tabContextMenu(for id: UUID) -> NSMenu {
         let menu = NSMenu()
-        let bookmark = NSMenuItem(title: "收藏此页面", action: #selector(bookmarkTab(_:)), keyEquivalent: "")
+        let bookmark = NSMenuItem(title: WebHubLanguage.text("Bookmark This Page"), action: #selector(bookmarkTab(_:)), keyEquivalent: "")
         bookmark.target = self
         bookmark.representedObject = id
         menu.addItem(bookmark)
-        let duplicate = NSMenuItem(title: "复制标签页", action: #selector(duplicateTabFromMenu(_:)), keyEquivalent: "")
+        let duplicate = NSMenuItem(title: WebHubLanguage.text("Duplicate Tab"), action: #selector(duplicateTabFromMenu(_:)), keyEquivalent: "")
         duplicate.target = self
         duplicate.representedObject = id
         menu.addItem(duplicate)
-        let openInBrowser = NSMenuItem(title: "用默认浏览器打开", action: #selector(openTabInDefaultBrowser(_:)), keyEquivalent: "")
+        let openInBrowser = NSMenuItem(title: WebHubLanguage.text("Open in Default Browser"), action: #selector(openTabInDefaultBrowser(_:)), keyEquivalent: "")
         openInBrowser.target = self
         openInBrowser.representedObject = id
         menu.addItem(openInBrowser)
         menu.addItem(NSMenuItem.separator())
-        let closeOthers = NSMenuItem(title: "关闭其他标签页", action: #selector(closeOtherTabsFromMenu(_:)), keyEquivalent: "")
+        let closeOthers = NSMenuItem(title: WebHubLanguage.text("Close Other Tabs"), action: #selector(closeOtherTabsFromMenu(_:)), keyEquivalent: "")
         closeOthers.target = self
         closeOthers.representedObject = id
         closeOthers.isEnabled = tabs.count > 1
         menu.addItem(closeOthers)
-        let close = NSMenuItem(title: "关闭标签页", action: #selector(closeTabFromMenu(_:)), keyEquivalent: "")
+        let close = NSMenuItem(title: WebHubLanguage.text("Close Tab"), action: #selector(closeTabFromMenu(_:)), keyEquivalent: "")
         close.target = self
         close.representedObject = id
         menu.addItem(close)
@@ -633,7 +633,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             closeBtn.menu = tabContextMenu(for: tab.id)
             closeBtn.isBordered = false
             if #available(macOS 11.0, *) {
-                closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭标签")
+                closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: WebHubLanguage.text("Close Tab"))
             }
             closeBtn.contentTintColor = .tertiaryLabelColor
             closeBtn.translatesAutoresizingMaskIntoConstraints = false
@@ -673,7 +673,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         var tooltip = tab.title
         if tab.webView != nil, tab !== activeTab, let deadline = tab.unloadDeadline {
             let seconds = max(0, Int(ceil(deadline.timeIntervalSinceNow)))
-            tooltip += "\n将在 \(seconds / 60):\(String(format: "%02d", seconds % 60)) 后释放网页"
+            tooltip += WebHubLanguage.format("\nPage unloads in %@", "\(seconds / 60):\(String(format: "%02d", seconds % 60))")
         }
         return tooltip
     }
@@ -767,7 +767,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         let alert = NSAlert()
         alert.messageText = appName
         alert.informativeText = homeURL.absoluteString
-        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: WebHubLanguage.text("OK"))
         alert.runModal()
     }
 
@@ -801,10 +801,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         // ⚠️ 单宿主（Chrome 式）：所有站点窗口共享同一个 NSApplication。
         // 所以这里的「隐藏 / 退出」**绝不能**用 NSApplication.hide/terminate ——
         // 那会把整个 WebHub 连同其他站点一起收掉。必须降级成「只作用于本窗口」。
-        appMenu.addItem(withTitle: "关于 \(appName)", action: #selector(aboutSite), keyEquivalent: "")
+        appMenu.addItem(withTitle: WebHubLanguage.format("About %@", appName), action: #selector(aboutSite), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "隐藏 \(appName)", action: #selector(hideSite), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "退出 \(appName)", action: #selector(closeSite), keyEquivalent: "q")
+        appMenu.addItem(withTitle: WebHubLanguage.format("Hide %@", appName), action: #selector(hideSite), keyEquivalent: "h")
+        appMenu.addItem(withTitle: WebHubLanguage.format("Quit %@", appName), action: #selector(closeSite), keyEquivalent: "q")
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
@@ -813,16 +813,18 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         mainMenu.addItem(editItem)
 
         let navItem = NSMenuItem()
-        let navMenu = NSMenu(title: "导航")
-        navMenu.addItem(withTitle: "后退", action: #selector(goBack), keyEquivalent: "[")
-        navMenu.addItem(withTitle: "前进", action: #selector(goForward), keyEquivalent: "]")
-        navMenu.addItem(withTitle: "主页", action: #selector(goHome), keyEquivalent: "H")
-        navMenu.addItem(withTitle: "刷新", action: #selector(reload), keyEquivalent: "r")
+        let navMenu = NSMenu(title: WebHubLanguage.text("Navigation"))
+        navMenu.addItem(withTitle: WebHubLanguage.text("Back"), action: #selector(goBack), keyEquivalent: "[")
+        navMenu.addItem(withTitle: WebHubLanguage.text("Forward"), action: #selector(goForward), keyEquivalent: "]")
+        navMenu.addItem(withTitle: WebHubLanguage.text("Home"), action: #selector(goHome), keyEquivalent: "H")
+        navMenu.addItem(withTitle: WebHubLanguage.text("Reload"), action: #selector(reload), keyEquivalent: "r")
         navMenu.addItem(NSMenuItem.separator())
-        navMenu.addItem(withTitle: "复制当前标签页", action: #selector(newTab), keyEquivalent: "t")
-        navMenu.addItem(withTitle: "关闭标签页", action: #selector(closeCurrentTab), keyEquivalent: "w")
+        navMenu.addItem(withTitle: WebHubLanguage.text("Duplicate Current Tab"), action: #selector(newTab), keyEquivalent: "t")
+        navMenu.addItem(withTitle: WebHubLanguage.text("Close Tab"), action: #selector(closeCurrentTab), keyEquivalent: "w")
         navItem.submenu = navMenu
         mainMenu.addItem(navItem)
+
+        mainMenu.addItem(LanguageMenu.shared.makeItem())
 
         // 单宿主下所有站点窗口共享同一个 NSApplication：
         // 不能在这里直接抢全局 mainMenu，否则后开的站点会把前面的菜单顶掉。
@@ -837,14 +839,14 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     /// ——地址栏和网页里选中的文字都复制不出来。标准 Edit 菜单补齐这一步。
     /// target 留空走响应链，落到当前第一响应者（field editor 或 WKWebView）。
     private func makeEditMenu() -> NSMenu {
-        let menu = NSMenu(title: "编辑")
-        menu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-        menu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        let menu = NSMenu(title: WebHubLanguage.text("Edit"))
+        menu.addItem(withTitle: WebHubLanguage.text("Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        menu.addItem(withTitle: WebHubLanguage.text("Redo"), action: Selector(("redo:")), keyEquivalent: "Z")
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        menu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        menu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        menu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        menu.addItem(withTitle: WebHubLanguage.text("Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        menu.addItem(withTitle: WebHubLanguage.text("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        menu.addItem(withTitle: WebHubLanguage.text("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        menu.addItem(withTitle: WebHubLanguage.text("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         return menu
     }
 
@@ -1011,7 +1013,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         panel.canChooseDirectories = parameters.allowsDirectories
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.resolvesAliases = true
-        panel.prompt = "选择"
+        panel.prompt = WebHubLanguage.text("Choose")
         panel.beginSheetModal(for: window) { response in
             completionHandler(response == .OK ? panel.urls : nil)
         }
@@ -1022,7 +1024,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert()
         alert.messageText = message
-        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: WebHubLanguage.text("OK"))
         alert.runModal()
         completionHandler()
     }
@@ -1179,7 +1181,7 @@ final class CopyableTextField: NSTextField {
     /// 鼠标右键菜单里给一个「复制地址」，省得先拖选
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        let copyItem = NSMenuItem(title: "复制地址", action: #selector(copyAll(_:)), keyEquivalent: "")
+        let copyItem = NSMenuItem(title: WebHubLanguage.text("Copy Address"), action: #selector(copyAll(_:)), keyEquivalent: "")
         copyItem.target = self
         menu.addItem(copyItem)
         return menu

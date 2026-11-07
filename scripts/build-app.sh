@@ -34,6 +34,11 @@ echo "==> 组装资源"
 cp "$BIN_DIR/WebHub" "$CONTENTS/MacOS/WebHub"
 chmod +x "$CONTENTS/MacOS/WebHub"
 cp "$ROOT/Sources/WebHub/Resources/launcher.html" "$CONTENTS/Resources/launcher.html"
+cp "$ROOT/Sources/WebHub/Resources/zh-CN.json" "$CONTENTS/Resources/zh-CN.json"
+# Let macOS discover the app's supported languages through standard bundle resources.
+mkdir -p "$CONTENTS/Resources/en.lproj" "$CONTENTS/Resources/zh-Hans.lproj"
+printf '"CFBundleDisplayName" = "WebHub";\n' > "$CONTENTS/Resources/en.lproj/InfoPlist.strings"
+printf '"CFBundleDisplayName" = "WebHub";\n' > "$CONTENTS/Resources/zh-Hans.lproj/InfoPlist.strings"
 [ -f "$ROOT/Resources/WebHub.icns" ] || { echo "✗ 缺少 Resources/WebHub.icns" >&2; exit 1; }
 cp "$ROOT/Resources/WebHub.icns" "$CONTENTS/Resources/WebHub.icns"
 if [ -f "$ROOT/LICENSE" ]; then
@@ -85,6 +90,13 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <string>WebHub</string>
     <key>CFBundleDisplayName</key>
     <string>WebHub</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
     <key>CFBundleIconFile</key>
     <string>WebHub.icns</string>
     <key>CFBundlePackageType</key>

@@ -9,7 +9,7 @@ extension RunnerWindowController {
             refreshBookmarks()
         } catch {
             let alert = NSAlert(error: error)
-            alert.messageText = "无法保存收藏"
+            alert.messageText = WebHubLanguage.text("Unable to Save Bookmarks")
             alert.runModal()
         }
     }
@@ -21,7 +21,7 @@ extension RunnerWindowController {
         var items = AppStore.shared.bookmarks(for: appID)
         guard !items.contains(where: { $0.url == url }) else {
             let alert = NSAlert()
-            alert.messageText = "此页面已收藏"
+            alert.messageText = WebHubLanguage.text("Page Already Bookmarked")
             alert.runModal()
             return
         }
@@ -44,7 +44,7 @@ extension RunnerWindowController {
             button.bezelStyle = .inline
             button.imagePosition = .imageLeading
             button.imageScaling = .scaleProportionallyDown
-            button.image = bookmarkIcons[bookmark.url] ?? NSImage(systemSymbolName: "globe", accessibilityDescription: "网页")
+            button.image = bookmarkIcons[bookmark.url] ?? NSImage(systemSymbolName: "globe", accessibilityDescription: WebHubLanguage.text("Website"))
             if bookmarkIcons[bookmark.url] == nil, !bookmarkIconRequests.contains(bookmark.url),
                let url = URL(string: bookmark.url), let scheme = url.scheme?.lowercased(),
                ["http", "https"].contains(scheme), let host = url.host {
@@ -65,7 +65,7 @@ extension RunnerWindowController {
             button.identifier = NSUserInterfaceItemIdentifier(bookmark.id.uuidString)
             button.toolTip = bookmark.url
             let menu = NSMenu()
-            for (title, action) in [("编辑名称", #selector(renameBookmark(_:))), ("复制地址", #selector(copyBookmark(_:))), ("删除收藏", #selector(deleteBookmark(_:)))] {
+            for (title, action) in [(WebHubLanguage.text("Edit Name"), #selector(renameBookmark(_:))), (WebHubLanguage.text("Copy Address"), #selector(copyBookmark(_:))), (WebHubLanguage.text("Delete Bookmark"), #selector(deleteBookmark(_:)))] {
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
                 item.target = self
                 item.representedObject = bookmark.id
@@ -90,12 +90,12 @@ extension RunnerWindowController {
         var items = AppStore.shared.bookmarks(for: appID)
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let alert = NSAlert()
-        alert.messageText = "编辑收藏名称"
+        alert.messageText = WebHubLanguage.text("Edit Bookmark Name")
         let field = NSTextField(string: items[index].title)
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
-        alert.addButton(withTitle: "保存")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: WebHubLanguage.text("Save"))
+        alert.addButton(withTitle: WebHubLanguage.text("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }

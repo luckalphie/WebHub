@@ -303,7 +303,7 @@ enum RunnerPackager {
             if let error = error {
                 DispatchQueue.main.async {
                     let alert = NSAlert()
-                    alert.messageText = "无法打开 \(app.name)"
+                    alert.messageText = WebHubLanguage.format("Unable to open %@", app.name)
                     alert.informativeText = error.localizedDescription
                     alert.runModal()
                 }

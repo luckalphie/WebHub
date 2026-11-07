@@ -17,6 +17,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+        let translationData = (try? JSONEncoder().encode(WebHubLanguage.translations)) ?? Data("{}".utf8)
+        let translationJSON = String(data: translationData, encoding: .utf8) ?? "{}"
+        config.userContentController.addUserScript(WKUserScript(source: "window.webHubChinese = \(WebHubLanguage.isChinese ? "true" : "false"); window.webHubTranslations = \(translationJSON);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController.add(self, name: "hub")
 
         webView = WKWebView(frame: .zero, configuration: config)
@@ -263,10 +266,10 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         let root = CredentialStore.registrableDomain(host)
 
         let alert = NSAlert()
-        alert.messageText = "清除 \(app.name) 的登录状态？"
-        alert.informativeText = "将清除 \(root) 的 Cookie、本地存储，以及已保存的账号密码。清除后需要重新登录。"
-        alert.addButton(withTitle: "清除")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = WebHubLanguage.format("Clear sign-in data for %@?", app.name)
+        alert.informativeText = WebHubLanguage.format("Cookies, local storage, and saved credentials for %@ will be cleared. You will need to sign in again.", root)
+        alert.addButton(withTitle: WebHubLanguage.text("Clear"))
+        alert.addButton(withTitle: WebHubLanguage.text("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let credentialScope = app.usesIsolatedLogin ? app.id : nil
@@ -276,7 +279,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         // 单宿主：所有窗口共用同一个数据仓库，直接清一次就全都没了，
         // 不需要再往共享池写墓碑通知「其它进程」。
         SharedStorage.clear(for: app) { [weak self] in
-            self?.eval("window.hubToast('已清除 \(root) 的登录状态')")
+            self?.eval("window.hubToast(\(jsString(WebHubLanguage.format("Sign-in data cleared for %@", root))))")
         }
     }
 
@@ -301,7 +304,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
                     _ = RunnerPackager.ensureApp(for: updated, iconPNG: nil)
                 }
                 self.refresh()
-                if announce { self.eval("window.hubToast('未能抓取网站图标，已使用名称图标')") }
+                if announce { self.eval("window.hubToast(\(jsString(WebHubLanguage.text("Could not fetch the website icon; using a name icon."))))") }
             }
         }
         if let iconURL = app.iconURL, !iconURL.isEmpty {
@@ -359,15 +362,15 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关于 WebHub", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: WebHubLanguage.text("About WebHub"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "隐藏 WebHub", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "退出 WebHub", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: WebHubLanguage.text("Hide WebHub"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: WebHubLanguage.text("Quit WebHub"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "编辑")
+        let editMenu = NSMenu(title: WebHubLanguage.text("Edit"))
 
         func standard(_ title: String, _ actionName: String, _ key: String,
                       _ mask: NSEvent.ModifierFlags = .command) {
@@ -375,28 +378,30 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             item.keyEquivalentModifierMask = mask
             editMenu.addItem(item)
         }
-        standard("撤销", "undo:", "z")
-        standard("重做", "redo:", "z", [.command, .shift])
+        standard(WebHubLanguage.text("Undo"), "undo:", "z")
+        standard(WebHubLanguage.text("Redo"), "redo:", "z", [.command, .shift])
         editMenu.addItem(NSMenuItem.separator())
-        standard("剪切", "cut:", "x")
-        standard("拷贝", "copy:", "c")
+        standard(WebHubLanguage.text("Cut"), "cut:", "x")
+        standard(WebHubLanguage.text("Copy"), "copy:", "c")
 
-        let pasteItem = NSMenuItem(title: "粘贴", action: #selector(pasteFromMenu), keyEquivalent: "v")
+        let pasteItem = NSMenuItem(title: WebHubLanguage.text("Paste"), action: #selector(pasteFromMenu), keyEquivalent: "v")
         pasteItem.target = self
         editMenu.addItem(pasteItem)
 
-        standard("全选", "selectAll:", "a")
+        standard(WebHubLanguage.text("Select All"), "selectAll:", "a")
         editMenu.addItem(NSMenuItem.separator())
 
-        let addItem = NSMenuItem(title: "添加应用…", action: #selector(addApp), keyEquivalent: "n")
+        let addItem = NSMenuItem(title: WebHubLanguage.text("Add App…"), action: #selector(addApp), keyEquivalent: "n")
         addItem.target = self
         editMenu.addItem(addItem)
-        let refreshItem = NSMenuItem(title: "刷新", action: #selector(refresh), keyEquivalent: "r")
+        let refreshItem = NSMenuItem(title: WebHubLanguage.text("Reload"), action: #selector(refresh), keyEquivalent: "r")
         refreshItem.target = self
         editMenu.addItem(refreshItem)
 
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
+
+        mainMenu.addItem(LanguageMenu.shared.makeItem())
 
         launcherMenu = mainMenu
         NSApplication.shared.mainMenu = mainMenu

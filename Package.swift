@@ -16,7 +16,7 @@ let package = Package(
         .executableTarget(
             name: "WebHub",
             dependencies: ["WebHubIPC"],
-            resources: [.copy("Resources/launcher.html")]
+            resources: [.copy("Resources/launcher.html"), .copy("Resources/zh-CN.json")]
         ),
         .executableTarget(
             name: "WebHubRunner",

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -219,73 +219,87 @@
       <h1>WebHub</h1>
       <span id="count"></span>
     </div>
-    <div class="hint">点图标打开 · 右键管理 · 拖拽排序</div>
+    <div class="hint">Click to open · Right-click to manage · Drag to reorder</div>
   </header>
   <div class="gridwrap">
     <div class="grid" id="grid"></div>
     <div class="empty" id="empty" style="display:none">
-      还没有应用。<br>点右下角「+」或右键空白处添加你的第一个网站。
+      No apps yet.<br>Click + or right-click the background to add your first website.
     </div>
   </div>
 </div>
 
 <div class="menu" id="menu">
-  <button data-act="open">打开</button>
-  <button data-act="edit">编辑…</button>
-  <button data-act="reicon">刷新图标</button>
+  <button data-act="open">Open</button>
+  <button data-act="edit">Edit…</button>
+  <button data-act="reicon">Refresh Icon</button>
   <div class="sep"></div>
-  <button data-act="clearlogin">清除该站点登录状态</button>
-  <button data-act="delete" class="danger">从桌面移除</button>
+  <button data-act="clearlogin">Clear Sign-in Data</button>
+  <button data-act="delete" class="danger">Remove App</button>
 </div>
 
 <div class="sheet-mask" id="mask">
   <div class="sheet">
-    <h2 id="sheetTitle">添加应用</h2>
+    <h2 id="sheetTitle">Add App</h2>
     <div class="field">
-      <label>名称</label>
-      <input id="fName" placeholder="例如 Bing" spellcheck="false">
+      <label>Name</label>
+      <input id="fName" placeholder="e.g. Bing" spellcheck="false">
     </div>
     <div class="field">
-      <label>网址</label>
+      <label>URL</label>
       <input id="fURL" placeholder="https://example.com" spellcheck="false">
-      <div class="tip">不写协议会自动补 https://</div>
+      <div class="tip">https:// is added if omitted</div>
     </div>
     <div class="field">
-      <label>支持的域名</label>
+      <label>Supported Domains</label>
       <input id="fSupportedDomains" placeholder="example.com, docs.example.net" spellcheck="false">
-      <div class="tip">逗号分隔；域名及其子域名留在 WebHub，其他链接用默认浏览器打开。</div>
+      <div class="tip">Separate domains with commas. These domains and their subdomains open in WebHub; other links open in your browser.</div>
     </div>
     <div class="field">
       <div class="login-setting-row">
-        <span class="login-setting-title">登录状态</span>
-        <label class="login-toggle"><input id="fIsolatedLogin" type="checkbox"><span class="login-switch"></span><span>独立保存</span></label>
+        <span class="login-setting-title">Sign-in Data</span>
+        <label class="login-toggle"><input id="fIsolatedLogin" type="checkbox"><span class="login-switch"></span><span>Separate</span></label>
       </div>
-      <div class="tip">关闭时与其他 WebApp 共享；开启后需在此应用重新登录。</div>
+      <div class="tip">When off, sign-in data is shared with other apps. When on, sign in again in this app.</div>
     </div>
     <div class="field">
-      <label>主题色</label>
+      <label>Accent Color</label>
       <div class="swatches" id="swatches"></div>
     </div>
     <div class="field">
-      <label>图标来源</label>
+      <label>Icon Source</label>
       <div class="icon-modes" id="iconModes">
-        <button type="button" data-mode="website">网页图标</button>
-        <button type="button" data-mode="name">应用名称</button>
+        <button type="button" data-mode="website">Website Icon</button>
+        <button type="button" data-mode="name">App Name</button>
       </div>
     </div>
     <div class="field icon-url-field" id="iconURLField">
-      <label>自定义图标 URL</label>
+      <label>Custom Icon URL</label>
       <input id="fIconURL" placeholder="https://example.com/icon.png" spellcheck="false">
-      <div class="tip">留空时自动获取网页图标</div>
+      <div class="tip">Leave blank to fetch the website icon automatically</div>
     </div>
     <div class="sheet-actions">
-      <button class="btn" id="btnCancel">取消</button>
-      <button class="btn primary" id="btnSave">保存</button>
+      <button class="btn" id="btnCancel">Cancel</button>
+      <button class="btn primary" id="btnSave">Save</button>
     </div>
   </div>
 </div>
 
 <script>
+const isChinese = window.webHubChinese === true;
+const translations = window.webHubTranslations || {};
+function tr(text) { return isChinese ? (translations[text] || text) : text; }
+if (isChinese) {
+  document.documentElement.lang = 'zh-CN';
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.parentElement.closest('script, style')) continue;
+    const key = node.nodeValue.trim();
+    if (translations[key]) node.nodeValue = node.nodeValue.replace(key, translations[key]);
+  }
+  document.querySelectorAll('[placeholder]').forEach(el => { el.placeholder = tr(el.placeholder); });
+}
 const bridge = window.webkit && window.webkit.messageHandlers ? window.webkit.messageHandlers.hub : null;
 function post(type, payload) {
   if (bridge) bridge.postMessage(Object.assign({ type }, payload || {}));
@@ -333,7 +347,7 @@ function iconNameLines(name) {
 
 function render() {
   const apps = state.apps || [];
-  document.getElementById('count').textContent = apps.length ? apps.length + ' 个应用' : '';
+  document.getElementById('count').textContent = apps.length ? (isChinese ? apps.length + tr(' apps') : apps.length + (apps.length === 1 ? ' app' : ' apps')) : '';
   empty.style.display = apps.length ? 'none' : 'block';
 
   grid.innerHTML = '';
@@ -342,7 +356,7 @@ function render() {
   }
   const add = document.createElement('div');
   add.className = 'app add';
-  add.innerHTML = '<div class="icon"><span>+</span></div><div class="name">添加</div>';
+  add.innerHTML = '<div class="icon"><span>+</span></div><div class="name">' + tr('Add') + '</div>';
   add.addEventListener('click', () => openSheet(null));
   grid.appendChild(add);
 }
@@ -471,7 +485,7 @@ function buildSwatches() {
 function openSheet(id) {
   editingId = id;
   const app = id ? state.apps.find(a => a.id === id) : null;
-  sheetTitle.textContent = app ? '编辑应用' : '添加应用';
+  sheetTitle.textContent = app ? tr('Edit App') : tr('Add App');
   fName.value = app ? app.name : '';
   fURL.value = app ? app.url : '';
   fSupportedDomains.value = app ? (app.supportedDomains || '') : '';

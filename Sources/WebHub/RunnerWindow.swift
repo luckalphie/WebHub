@@ -38,6 +38,24 @@ private final class TabToolTipOwner: NSObject, NSViewToolTipOwner {
     }
 }
 
+// 全尺寸内容覆盖标题栏时，空白区域由自定义视图接收鼠标事件。
+private final class TitlebarBackgroundView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        guard let window = window else { return }
+        if event.clickCount == 2 {
+            // 遵循「桌面与程序坞」中窗口标题栏连按的系统设置。
+            let action = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "Maximize"
+            switch action.lowercased() {
+            case "maximize": window.performZoom(nil)
+            case "minimize": window.performMiniaturize(nil)
+            default: break
+            }
+        } else {
+            window.performDrag(with: event)
+        }
+    }
+}
+
 // MARK: - 运行器窗口
 
 final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
@@ -53,7 +71,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private var tabStack: NSStackView!
     var bookmarkIcons: [String: NSImage] = [:]
     var bookmarkIconRequests: Set<String> = []
-    private var bookmarkBar: NSScrollView!
+    var bookmarkBar: NSScrollView!
+    var bookmarkBarHeight: NSLayoutConstraint!
     var bookmarkStack: NSStackView!
     private var contentHost: NSView!
     private var addressField: NSTextField!
@@ -205,7 +224,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         self.topBar = topBar
 
         // 标签栏（最顶）
-        tabBar = NSView()
+        tabBar = TitlebarBackgroundView()
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         tabBar.wantsLayer = true
         tabBar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
@@ -233,6 +252,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         bookmarkStack.alignment = .centerY
         bookmarkStack.spacing = 6
         bookmarkBar.documentView = bookmarkStack
+        bookmarkBarHeight = bookmarkBar.heightAnchor.constraint(equalToConstant: 0)
         refreshBookmarks()
 
         // 内容区
@@ -261,7 +281,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             bookmarkBar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             bookmarkBar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             bookmarkBar.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            bookmarkBar.heightAnchor.constraint(equalToConstant: 32),
+            bookmarkBarHeight,
             contentHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             contentHost.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             contentHost.topAnchor.constraint(equalTo: bookmarkBar.bottomAnchor),

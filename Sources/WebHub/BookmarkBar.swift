@@ -35,8 +35,11 @@ extension RunnerWindowController {
 
     func refreshBookmarks() {
         guard let stack = bookmarkStack else { return }
+        let bookmarks = AppStore.shared.bookmarks(for: appID)
+        bookmarkBar.isHidden = bookmarks.isEmpty
+        bookmarkBarHeight.constant = bookmarks.isEmpty ? 0 : 32
         stack.arrangedSubviews.forEach { stack.removeArrangedSubview($0); $0.removeFromSuperview() }
-        for bookmark in AppStore.shared.bookmarks(for: appID) {
+        for bookmark in bookmarks {
             let button = NSButton(title: bookmark.title, target: self, action: #selector(openBookmark(_:)))
             button.bezelStyle = .inline
             button.imagePosition = .imageLeading

@@ -178,9 +178,10 @@ final class AppStore {
         return domains.filter { seen.insert($0).inserted }
     }
 
-    func remove(id: String) {
+    func remove(id: String) throws {
         guard let idx = apps.firstIndex(where: { $0.id == id }) else { return }
         let app = apps[idx]
+        try removeBookmarks(for: id)
         if app.usesIsolatedLogin {
             SharedStorage.deletePersistentStore(for: app)
             CredentialStore.shared.deleteAll(appID: app.id)
@@ -236,53 +237,125 @@ final class AppStore {
     private var bookmarksFile: URL { rootDir.appendingPathComponent("bookmarks.json") }
     private var bookmarksBackupFile: URL { backupDir.appendingPathComponent("bookmarks-backup.json") }
 
-    private func allBookmarks() -> [String: [Bookmark]] {
-        for file in [bookmarksFile, bookmarksBackupFile] {
-            if let data = try? Data(contentsOf: file),
-               let items = try? JSONDecoder().decode([String: [Bookmark]].self, from: data) {
-                return items
-            }
-        }
-        return [:]
+    private func bookmarksFile(for id: String, backup: Bool) -> URL {
+        let name = UUID(uuidString: id)?.uuidString.lowercased()
+            ?? "id-" + id.utf8.map { String(format: "%02x", $0) }.joined()
+        let directory = (backup ? backupDir : rootDir).appendingPathComponent("bookmarks", isDirectory: true)
+        return directory.appendingPathComponent(name + ".json")
     }
 
-    func bookmarks(for id: String) -> [Bookmark] { allBookmarks()[id] ?? [] }
+    private func removeBookmarks(for id: String) throws {
+        // 旧版合并文件可能尚未迁移，逐条清理而不影响其他站点。
+        for file in [bookmarksFile, bookmarksBackupFile] where fm.fileExists(atPath: file.path) {
+            let data = try Data(contentsOf: file)
+            var all = try JSONDecoder().decode([String: [Bookmark]].self, from: data)
+            if all.removeValue(forKey: id) != nil {
+                try JSONEncoder().encode(all).write(to: file, options: .atomic)
+            }
+        }
+        for backup in [false, true] {
+            let file = bookmarksFile(for: id, backup: backup)
+            if fm.fileExists(atPath: file.path) { try fm.removeItem(at: file) }
+        }
+    }
 
-    func saveBookmarks(_ bookmarks: [Bookmark], for id: String) throws {
-        var all = allBookmarks()
-        all[id] = bookmarks
-        let data = try JSONEncoder().encode(all)
-        try fm.createDirectory(at: rootDir, withIntermediateDirectories: true)
-        try data.write(to: bookmarksFile, options: .atomic)
-        try data.write(to: bookmarksBackupFile, options: .atomic)
+    private func readBookmarks(at file: URL) -> [Bookmark]? {
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        return try? JSONDecoder().decode([Bookmark].self, from: data)
+    }
+
+    func bookmarks(for id: String) -> [Bookmark] {
+        let primary = bookmarksFile(for: id, backup: false)
+        let backup = bookmarksFile(for: id, backup: true)
+        if let items = readBookmarks(at: primary) { return items }
+        if let items = readBookmarks(at: backup) {
+            do {
+                try fm.createDirectory(at: primary.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try JSONEncoder().encode(items).write(to: primary, options: .atomic)
+            } catch { NSLog("WebHub: Failed to restore bookmarks: %@", error.localizedDescription) }
+            return items
+        }
+        // 避免新版文件损坏时恢复过期的旧收藏。
+        guard !fm.fileExists(atPath: primary.path), !fm.fileExists(atPath: backup.path) else { return [] }
+        for file in [bookmarksFile, bookmarksBackupFile] {
+            guard let data = try? Data(contentsOf: file),
+                  let all = try? JSONDecoder().decode([String: [Bookmark]].self, from: data) else { continue }
+            guard let items = all[id] else { return [] }
+            do { _ = try saveBookmarks(items, for: id) }
+            catch { NSLog("WebHub: Failed to migrate bookmarks: %@", error.localizedDescription) }
+            return items
+        }
+        return []
+    }
+
+    /// 返回备份是否写入成功；主文件写入失败时抛错。
+    @discardableResult
+    func saveBookmarks(_ bookmarks: [Bookmark], for id: String) throws -> Bool {
+        let data = try JSONEncoder().encode(bookmarks)
+        let primary = bookmarksFile(for: id, backup: false)
+        try fm.createDirectory(at: primary.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: primary, options: .atomic)
+        let backup = bookmarksFile(for: id, backup: true)
+        do {
+            try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: backup, options: .atomic)
+            return true
+        } catch {
+            NSLog("WebHub: Failed to back up bookmarks: %@", error.localizedDescription)
+            return false
+        }
     }
 
     // MARK: 会话
 
+    private func sessionFile(for id: String, backup: Bool) -> URL {
+        // UUID 是常见格式；旧数据中的其他 ID 编码为十六进制，避免成为路径。
+        let name = UUID(uuidString: id)?.uuidString.lowercased()
+            ?? "id-" + id.utf8.map { String(format: "%02x", $0) }.joined()
+        let directory = (backup ? backupDir : rootDir).appendingPathComponent("sessions", isDirectory: true)
+        return directory.appendingPathComponent(name + ".json")
+    }
+
+    private func readSession(at url: URL) -> TabSession? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(TabSession.self, from: data)
+    }
+
     func session(for id: String) -> TabSession? {
-        if let data = try? Data(contentsOf: sessionsFile),
-           let dict = try? JSONDecoder().decode([String: TabSession].self, from: data) {
-            return dict[id]
+        let primary = sessionFile(for: id, backup: false)
+        let backup = sessionFile(for: id, backup: true)
+        if let session = readSession(at: primary) { return session }
+        if let session = readSession(at: backup) {
+            // 修复缺失或损坏的主文件，不改变备份。
+            do {
+                try fm.createDirectory(at: primary.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try JSONEncoder().encode(session).write(to: primary, options: .atomic)
+            } catch { NSLog("WebHub: Failed to restore session: %@", error.localizedDescription) }
+            return session
         }
-        // 主文件没了就退回备份
-        if let data = try? Data(contentsOf: sessionsBackupFile),
-           let dict = try? JSONDecoder().decode([String: TabSession].self, from: data) {
-            return dict[id]
+        // 有新版文件时不能回退到旧数据，以免恢复过期标签。
+        guard !fm.fileExists(atPath: primary.path), !fm.fileExists(atPath: backup.path) else { return nil }
+        for file in [sessionsFile, sessionsBackupFile] {
+            guard let data = try? Data(contentsOf: file),
+                  let all = try? JSONDecoder().decode([String: TabSession].self, from: data) else { continue }
+            guard let session = all[id] else { return nil }
+            saveSession(session, for: id)
+            return session
         }
         return nil
     }
 
     func saveSession(_ session: TabSession, for id: String) {
-        var dict: [String: TabSession] = [:]
-        if let data = try? Data(contentsOf: sessionsFile),
-           let existing = try? JSONDecoder().decode([String: TabSession].self, from: data) {
-            dict = existing
-        }
-        dict[id] = session
-        if let data = try? JSONEncoder().encode(dict) {
-            try? fm.createDirectory(at: rootDir, withIntermediateDirectories: true)
-            try? data.write(to: sessionsFile, options: .atomic)
-            try? data.write(to: sessionsBackupFile, options: .atomic)
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        for backup in [false, true] {
+            let file = sessionFile(for: id, backup: backup)
+            do {
+                try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: file, options: .atomic)
+            } catch {
+                NSLog("WebHub: Failed to save %@ session: %@", backup ? "backup" : "primary", error.localizedDescription)
+                if !backup { return }
+            }
         }
     }
 

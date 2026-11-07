@@ -73,5 +73,11 @@
   "Language changed": "语言已更改",
   "Restart WebHub to apply the language change to all windows.": "请重启 WebHub，使所有窗口应用新的语言设置。",
   "Language": "语言",
-  "System Default": "跟随系统"
+  "System Default": "跟随系统",
+  "Bookmarks Saved, Backup Failed": "收藏已保存，但备份失败",
+  "Your bookmarks were saved, but their backup could not be updated.": "收藏已保存，但无法更新备份。",
+  "Remove %@?": "移除 %@？",
+  "This also deletes the app's bookmarks and their backup.": "这也会删除该应用的收藏及其备份。",
+  "Remove": "移除",
+  "Unable to Remove App": "无法移除应用"
 }

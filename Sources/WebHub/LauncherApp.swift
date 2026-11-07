@@ -233,10 +233,23 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             _ = RunnerPackager.ensureApp(for: updated, iconPNG: nil)
 
         case "delete":
-            guard let id = body["id"] as? String else { return }
+            guard let id = body["id"] as? String,
+                  let app = store.apps.first(where: { $0.id == id }) else { return }
+            let alert = NSAlert()
+            alert.messageText = WebHubLanguage.format("Remove %@?", app.name)
+            alert.informativeText = WebHubLanguage.text("This also deletes the app's bookmarks and their backup.")
+            alert.addButton(withTitle: WebHubLanguage.text("Remove"))
+            alert.addButton(withTitle: WebHubLanguage.text("Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
             SiteWindowManager.shared.close(id)
-            store.remove(id: id)
-            refresh()
+            do {
+                try store.remove(id: id)
+                refresh()
+            } catch {
+                let failure = NSAlert(error: error)
+                failure.messageText = WebHubLanguage.text("Unable to Remove App")
+                failure.runModal()
+            }
 
         case "reicon":
             guard let id = body["id"] as? String,

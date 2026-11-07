@@ -71,6 +71,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private var tabStack: NSStackView!
     var bookmarkIcons: [String: NSImage] = [:]
     var bookmarkIconRequests: Set<String> = []
+    var bookmarkIconsInFlight: Set<String> = []
     var bookmarkBar: NSScrollView!
     var bookmarkBarHeight: NSLayoutConstraint!
     var bookmarkStack: NSStackView!

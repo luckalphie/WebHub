@@ -5,8 +5,14 @@ import WebKit
 extension RunnerWindowController {
     private func saveBookmarks(_ items: [Bookmark]) {
         do {
-            try AppStore.shared.saveBookmarks(items, for: appID)
+            let backupSaved = try AppStore.shared.saveBookmarks(items, for: appID)
             refreshBookmarks()
+            if !backupSaved {
+                let alert = NSAlert()
+                alert.messageText = WebHubLanguage.text("Bookmarks Saved, Backup Failed")
+                alert.informativeText = WebHubLanguage.text("Your bookmarks were saved, but their backup could not be updated.")
+                alert.runModal()
+            }
         } catch {
             let alert = NSAlert(error: error)
             alert.messageText = WebHubLanguage.text("Unable to Save Bookmarks")
@@ -38,31 +44,24 @@ extension RunnerWindowController {
         let bookmarks = AppStore.shared.bookmarks(for: appID)
         bookmarkBar.isHidden = bookmarks.isEmpty
         bookmarkBarHeight.constant = bookmarks.isEmpty ? 0 : 32
-        stack.arrangedSubviews.forEach { stack.removeArrangedSubview($0); $0.removeFromSuperview() }
-        for bookmark in bookmarks {
+        let ids = Set(bookmarks.map { $0.id.uuidString })
+        for view in stack.arrangedSubviews where !ids.contains(view.identifier?.rawValue ?? "") {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for (index, bookmark) in bookmarks.enumerated() {
+            let identifier = NSUserInterfaceItemIdentifier(bookmark.id.uuidString)
+            if let button = stack.arrangedSubviews.first(where: { $0.identifier == identifier }) as? NSButton {
+                if button.title != bookmark.title { button.title = bookmark.title }
+                continue
+            }
             let button = NSButton(title: bookmark.title, target: self, action: #selector(openBookmark(_:)))
             button.bezelStyle = .inline
             button.imagePosition = .imageLeading
             button.imageScaling = .scaleProportionallyDown
             button.image = bookmarkIcons[bookmark.url] ?? NSImage(systemSymbolName: "globe", accessibilityDescription: WebHubLanguage.text("Website"))
-            if bookmarkIcons[bookmark.url] == nil, !bookmarkIconRequests.contains(bookmark.url),
-               let url = URL(string: bookmark.url), let scheme = url.scheme?.lowercased(),
-               ["http", "https"].contains(scheme), let host = url.host {
-                bookmarkIconRequests.insert(bookmark.url)
-                var origin = URLComponents()
-                origin.scheme = scheme
-                origin.host = host
-                origin.port = url.port
-                if let originURL = origin.url {
-                    IconFetcher.fetch(for: originURL.absoluteString) { [weak self] data in
-                        guard let self = self, let data = data, let image = NSImage(data: data) else { return }
-                        image.size = NSSize(width: 16, height: 16)
-                        self.bookmarkIcons[bookmark.url] = image
-                        self.refreshBookmarks()
-                    }
-                }
-            }
-            button.identifier = NSUserInterfaceItemIdentifier(bookmark.id.uuidString)
+            fetchBookmarkIcon(for: bookmark.url, retry: false)
+            button.identifier = identifier
             button.toolTip = bookmark.url
             let menu = NSMenu()
             for (title, action) in [(WebHubLanguage.text("Edit Name"), #selector(renameBookmark(_:))), (WebHubLanguage.text("Copy Address"), #selector(copyBookmark(_:))), (WebHubLanguage.text("Delete Bookmark"), #selector(deleteBookmark(_:)))] {
@@ -72,15 +71,40 @@ extension RunnerWindowController {
                 menu.addItem(item)
             }
             button.menu = menu
-            stack.addArrangedSubview(button)
+            stack.insertArrangedSubview(button, at: index)
         }
         stack.frame = NSRect(x: 0, y: 0, width: max(stack.fittingSize.width, 1), height: 30)
+    }
+
+    private func fetchBookmarkIcon(for address: String, retry: Bool) {
+        guard bookmarkIcons[address] == nil, !bookmarkIconsInFlight.contains(address),
+              retry || !bookmarkIconRequests.contains(address),
+              let url = URL(string: address), let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme), let host = url.host else { return }
+        var origin = URLComponents()
+        origin.scheme = scheme
+        origin.host = host
+        origin.port = url.port
+        guard let originURL = origin.url else { return }
+        bookmarkIconRequests.insert(address)
+        bookmarkIconsInFlight.insert(address)
+        IconFetcher.fetch(for: originURL.absoluteString) { [weak self] data in
+            guard let self = self else { return }
+            self.bookmarkIconsInFlight.remove(address)
+            guard let data = data, let image = NSImage(data: data) else { return }
+            image.size = NSSize(width: 16, height: 16)
+            self.bookmarkIcons[address] = image
+            for case let button as NSButton in self.bookmarkStack.arrangedSubviews where button.toolTip == address {
+                button.image = image
+            }
+        }
     }
 
     @objc private func openBookmark(_ sender: NSButton) {
         guard let id = sender.identifier.flatMap({ UUID(uuidString: $0.rawValue) }),
               let bookmark = AppStore.shared.bookmarks(for: appID).first(where: { $0.id == id }),
               let url = URL(string: bookmark.url) else { return }
+        fetchBookmarkIcon(for: bookmark.url, retry: true)
         addTab(url: url, activate: true)
         persistSession()
     }

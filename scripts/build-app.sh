@@ -14,7 +14,7 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 APP="$ROOT/dist/WebHub.app"
 BUNDLE_ID="cn.webhub.launcher"
-VERSION="${WEBHUB_VERSION:-1.0.5}"
+VERSION="${WEBHUB_VERSION:-1.0.6}"
 
 cd "$ROOT"
 

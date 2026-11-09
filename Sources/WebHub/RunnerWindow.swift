@@ -10,6 +10,7 @@ final class TabItem {
     var url: URL
     var favicon: NSImage?
     var faviconURL: String?
+    var showsRestoredIcon = false
     var titleObservation: NSKeyValueObservation?
     var urlObservation: NSKeyValueObservation?
     var unloadWork: DispatchWorkItem?
@@ -152,8 +153,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private func restoreTabs() {
         guard tabs.isEmpty else { return }
         if let session = AppStore.shared.session(for: appID), !session.urls.isEmpty {
-            for u in session.urls {
-                addTab(url: URL(string: u) ?? homeURL, activate: false)
+            for (index, u) in session.urls.enumerated() {
+                let title = session.titles.flatMap { index < $0.count ? $0[index] : nil }
+                let tab = addTab(url: URL(string: u) ?? homeURL, activate: false, title: title)
+                tab.showsRestoredIcon = true
             }
             let idx = min(max(session.activeIndex, 0), tabs.count - 1)
             selectTab(idx)
@@ -357,8 +360,9 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     // MARK: 标签管理
 
     @discardableResult
-    func addTab(url: URL, activate: Bool) -> TabItem {
-        let tab = TabItem(title: url.host ?? WebHubLanguage.text("Loading…"), url: url)
+    func addTab(url: URL, activate: Bool, title: String? = nil) -> TabItem {
+        let savedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tab = TabItem(title: (savedTitle?.isEmpty == false ? savedTitle : nil) ?? url.host ?? WebHubLanguage.text("Loading…"), url: url)
         tabs.append(tab)
         if activate {
             selectTab(tabs.count - 1)
@@ -397,11 +401,12 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             guard let self = self, let tab = tab,
                   self.tabs.contains(where: { $0 === tab }) else { return }
             let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let updated = (title?.isEmpty == false ? title : nil) ?? webView.url?.host ?? tab.url.host ?? WebHubLanguage.text("Loading…")
+            guard let updated = title, !updated.isEmpty else { return }
             guard tab.title != updated else { return }
             tab.title = updated
             if self.activeTab === tab { self.window.title = updated }
             self.rebuildTabBar()
+            self.persistSession()
         }
         tab.urlObservation = wv.observe(\.url, options: [.new]) { [weak self, weak tab, weak wv] _, _ in
             DispatchQueue.main.async { [weak self, weak tab, weak wv] in
@@ -603,10 +608,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             faviconButton.tag = i
             faviconButton.menu = tabContextMenu(for: tab.id)
             faviconButton.isBordered = false
-            faviconButton.image = tab.favicon
+            let showIcon = tab.favicon != nil || tab.showsRestoredIcon
+            faviconButton.image = tab.favicon ?? (tab.showsRestoredIcon ? NSImage(systemSymbolName: "globe", accessibilityDescription: WebHubLanguage.text("Website")) : nil)
             faviconButton.imagePosition = .imageOnly
             faviconButton.imageScaling = .scaleProportionallyDown
-            faviconButton.isHidden = tab.favicon == nil
+            faviconButton.isHidden = !showIcon
             faviconButton.translatesAutoresizingMaskIntoConstraints = false
             holder.addSubview(faviconButton)
 
@@ -650,9 +656,9 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
                 selectionButton.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
                 faviconButton.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 7),
                 faviconButton.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
-                faviconButton.widthAnchor.constraint(equalToConstant: tab.favicon == nil ? 0 : 20),
+                faviconButton.widthAnchor.constraint(equalToConstant: showIcon ? 20 : 0),
                 faviconButton.heightAnchor.constraint(equalToConstant: 20),
-                titleBtn.leadingAnchor.constraint(equalTo: faviconButton.trailingAnchor, constant: tab.favicon == nil ? 2 : 4),
+                titleBtn.leadingAnchor.constraint(equalTo: faviconButton.trailingAnchor, constant: showIcon ? 4 : 2),
                 titleBtn.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
                 titleBtn.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -4),
                 closeBtn.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -5),
@@ -724,7 +730,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     func persistSession() {
         let urls = tabs.map { $0.webView?.url?.absoluteString ?? $0.url.absoluteString }
         guard !urls.isEmpty else { return }
-        AppStore.shared.saveSession(TabSession(urls: urls, activeIndex: activeIndex), for: appID)
+        AppStore.shared.saveSession(TabSession(urls: urls, activeIndex: activeIndex, titles: tabs.map(\.title)), for: appID)
     }
 
     // MARK: 动作
@@ -959,6 +965,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         updateAddress()
 
         guard let tab = tabs.first(where: { $0.webView === webView }) else { return }
+        tab.showsRestoredIcon = false
         if let host = webView.url?.host {
             tab.title = webView.title?.isEmpty == false ? webView.title! : host
         }

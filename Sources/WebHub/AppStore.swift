@@ -62,6 +62,7 @@ struct Bookmark: Codable {
 struct TabSession: Codable {
     var urls: [String]
     var activeIndex: Int
+    var titles: [String]? = nil
 }
 
 // MARK: - 存储

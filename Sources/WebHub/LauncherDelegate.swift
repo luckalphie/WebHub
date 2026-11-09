@@ -4,6 +4,7 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
     private var controller: LauncherWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        WebHubAppearance.apply(WebHubAppearance.preference)
         SharedStorage.warmUp()
         // 把旧目录中的站点包迁移到用户的应用程序目录。
         RunnerPackager.migrateLegacyBundles()

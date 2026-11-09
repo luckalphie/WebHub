@@ -40,9 +40,8 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = false
         window.titleVisibility = .visible
-        window.appearance = NSAppearance(named: .darkAqua)
         window.minSize = NSSize(width: 620, height: 460)
-        window.backgroundColor = NSColor(calibratedRed: 0.05, green: 0.06, blue: 0.09, alpha: 1)
+        window.backgroundColor = .windowBackgroundColor
         window.isMovableByWindowBackground = true
         window.center()
         restoreWindowFrame()
@@ -415,6 +414,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         mainMenu.addItem(editItem)
 
         mainMenu.addItem(LanguageMenu.shared.makeItem())
+        mainMenu.addItem(AppearanceMenu.shared.makeItem())
 
         launcherMenu = mainMenu
         NSApplication.shared.mainMenu = mainMenu

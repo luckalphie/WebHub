@@ -6,6 +6,7 @@
 <title>WebHub</title>
 <style>
   :root {
+    color-scheme: light dark;
     --tile: 80px;
     --gap: 34px;
     --label: rgba(255,255,255,.92);
@@ -209,6 +210,62 @@
   .btn.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; font-weight: 500; }
   .btn.primary:hover { background: #4a8dfa; }
   .btn:disabled { opacity: .45; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%);
+    background: rgba(30,36,48,.92); color: #fff; padding: 9px 18px;
+    border-radius: 10px; font-size: 13px; z-index: 99;
+    border: 1px solid rgba(255,255,255,.14); box-shadow: 0 12px 30px rgba(0,0,0,.45);
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root { --label: rgba(28,38,56,.92); }
+    html, body { background: #edf2f9; color: #202c40; }
+    .wallpaper {
+      background:
+        radial-gradient(1100px 700px at 12% 6%, rgba(147,197,253,.5), transparent 62%),
+        radial-gradient(900px 640px at 88% 4%, rgba(216,180,254,.38), transparent 60%),
+        radial-gradient(1000px 780px at 72% 96%, rgba(253,186,116,.32), transparent 62%),
+        radial-gradient(820px 600px at 20% 92%, rgba(110,231,183,.28), transparent 62%),
+        linear-gradient(160deg, #f4f8ff 0%, #eaf0fa 42%, #e8eef7 100%);
+    }
+    .wallpaper::after { background-image: radial-gradient(rgba(36,52,76,.06) 1px, transparent 1px); }
+    .brand h1, .name { text-shadow: none; }
+    .brand span { color: rgba(35,48,69,.6); }
+    .hint, .empty { color: rgba(35,48,69,.58); }
+    .gridwrap::-webkit-scrollbar-thumb { background-color: rgba(35,48,69,.25); }
+    .app.drop-target::before { border-color: rgba(35,48,69,.5); }
+    .icon { box-shadow: 0 10px 26px rgba(46,65,94,.2), 0 1px 0 rgba(255,255,255,.5) inset; }
+    .icon .badge { border-color: #edf2f9; }
+    .app.add .icon { background: rgba(255,255,255,.45); border-color: rgba(52,72,102,.35); }
+    .app.add .icon span { color: rgba(35,48,69,.7); }
+    .app.add:hover .icon { background: rgba(255,255,255,.7); border-color: rgba(52,72,102,.55); }
+    .menu, .sheet {
+      background: rgba(250,252,255,.95); border-color: rgba(45,60,82,.16);
+      box-shadow: 0 18px 44px rgba(33,48,75,.23);
+    }
+    .menu button, .icon-modes button, .btn { color: #243047; }
+    .menu button:hover { background: rgba(45,60,82,.1); }
+    .menu button.danger { color: #c3313c; }
+    .menu .sep { background: rgba(45,60,82,.12); }
+    .sheet-mask { background: rgba(29,42,63,.28); }
+    .field label, .login-setting-title { color: rgba(35,48,69,.72); }
+    .field .tip { color: rgba(35,48,69,.6); }
+    .field input {
+      border-color: rgba(45,60,82,.22); background: #fff; color: #202c40;
+    }
+    .field input:focus { background: #fff; }
+    .login-toggle { color: #243047 !important; }
+    .login-switch { background: rgba(45,60,82,.25); }
+    .login-toggle input:checked + .login-switch { background: #3b82f6; }
+    .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(35,48,69,.42); }
+    .icon-modes button, .btn { border-color: rgba(45,60,82,.2); background: rgba(45,60,82,.06); }
+    .icon-modes button.active { border-color: #3b82f6; background: rgba(59,130,246,.15); }
+    .btn:hover { background: rgba(45,60,82,.12); }
+    .btn.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+    .btn.primary:hover { background: #3175e1; }
+    .toast { background: rgba(250,252,255,.96); color: #243047; border-color: rgba(45,60,82,.16); box-shadow: 0 12px 30px rgba(33,48,75,.2); }
+  }
 </style>
 </head>
 <body>
@@ -540,7 +597,7 @@ window.hubSetRunning = function (listJSON) {
 window.hubToast = function (msg) {
   const t = document.createElement('div');
   t.textContent = msg;
-  t.style.cssText = 'position:fixed;left:50%;bottom:44px;transform:translateX(-50%);background:rgba(30,36,48,.92);color:#fff;padding:9px 18px;border-radius:10px;font-size:13px;z-index:99;border:1px solid rgba(255,255,255,.14);box-shadow:0 12px 30px rgba(0,0,0,.45);';
+  t.className = 'toast';
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2200);
 };

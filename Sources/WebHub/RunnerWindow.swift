@@ -39,7 +39,7 @@ private final class TabToolTipOwner: NSObject, NSViewToolTipOwner {
 }
 
 // 全尺寸内容覆盖标题栏时，空白区域由自定义视图接收鼠标事件。
-private final class TitlebarBackgroundView: NSView {
+private final class TitlebarBackgroundView: AppearanceBackgroundView {
     override func mouseDown(with event: NSEvent) {
         guard let window = window else { return }
         if event.clickCount == 2 {
@@ -211,24 +211,18 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         }
         window.delegate = self
 
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        let root = AppearanceBackgroundView(backgroundColor: .windowBackgroundColor)
         window.contentView = root
 
         // 工具栏（标签栏下面一行）
-        let topBar = NSView()
+        let topBar = AppearanceBackgroundView(backgroundColor: .controlBackgroundColor)
         topBar.translatesAutoresizingMaskIntoConstraints = false
-        topBar.wantsLayer = true
-        topBar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         root.addSubview(topBar)
         self.topBar = topBar
 
         // 标签栏（最顶）
-        tabBar = TitlebarBackgroundView()
+        tabBar = TitlebarBackgroundView(backgroundColor: .controlBackgroundColor)
         tabBar.translatesAutoresizingMaskIntoConstraints = false
-        tabBar.wantsLayer = true
-        tabBar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         root.addSubview(tabBar)
 
         tabStack = NSStackView()
@@ -591,12 +585,9 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         }
 
         for (i, tab) in tabs.enumerated() {
-            let holder = NSView()
-            holder.wantsLayer = true
+            let holder = AppearanceBackgroundView(backgroundColor: i == activeIndex
+                ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.22) : .clear)
             holder.layer?.cornerRadius = 7
-            holder.layer?.backgroundColor = (i == activeIndex
-                ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.22).cgColor
-                : NSColor.clear.cgColor)
             holder.translatesAutoresizingMaskIntoConstraints = false
             holder.menu = tabContextMenu(for: tab.id)
 
@@ -829,6 +820,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         mainMenu.addItem(navItem)
 
         mainMenu.addItem(LanguageMenu.shared.makeItem())
+        mainMenu.addItem(AppearanceMenu.shared.makeItem())
 
         // 单宿主下所有站点窗口共享同一个 NSApplication：
         // 不能在这里直接抢全局 mainMenu，否则后开的站点会把前面的菜单顶掉。

@@ -10,7 +10,6 @@ final class TabItem {
     var url: URL
     var favicon: NSImage?
     var faviconURL: String?
-    var showsRestoredIcon = false
     var titleObservation: NSKeyValueObservation?
     var urlObservation: NSKeyValueObservation?
     var unloadWork: DispatchWorkItem?
@@ -60,6 +59,7 @@ private final class TitlebarBackgroundView: AppearanceBackgroundView {
 // MARK: - 运行器窗口
 
 final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+    private static let maxTabWidth: CGFloat = 150
 
     let appID: String
     private let appName: String
@@ -70,6 +70,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     private var topBar: NSView!
     private var tabBar: NSView!
     private var tabStack: NSStackView!
+    private var tabStackWidth: NSLayoutConstraint!
     var bookmarkIcons: [String: NSImage] = [:]
     var bookmarkIconRequests: Set<String> = []
     var bookmarkIconsInFlight: Set<String> = []
@@ -155,8 +156,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         if let session = AppStore.shared.session(for: appID), !session.urls.isEmpty {
             for (index, u) in session.urls.enumerated() {
                 let title = session.titles.flatMap { index < $0.count ? $0[index] : nil }
-                let tab = addTab(url: URL(string: u) ?? homeURL, activate: false, title: title)
-                tab.showsRestoredIcon = true
+                addTab(url: URL(string: u) ?? homeURL, activate: false, title: title)
             }
             let idx = min(max(session.activeIndex, 0), tabs.count - 1)
             selectTab(idx)
@@ -238,6 +238,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         tabStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
         tabStack.setHuggingPriority(.defaultLow, for: .horizontal)
         tabBar.addSubview(tabStack)
+        tabStackWidth = tabStack.widthAnchor.constraint(equalToConstant: 0)
+        tabStackWidth.isActive = true
 
         bookmarkBar = BookmarkScrollView()
         bookmarkBar.onBookmarkDrop = { [weak self] id, index in
@@ -608,11 +610,9 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             faviconButton.tag = i
             faviconButton.menu = tabContextMenu(for: tab.id)
             faviconButton.isBordered = false
-            let showIcon = tab.favicon != nil || tab.showsRestoredIcon
-            faviconButton.image = tab.favicon ?? (tab.showsRestoredIcon ? NSImage(systemSymbolName: "globe", accessibilityDescription: WebHubLanguage.text("Website")) : nil)
+            faviconButton.image = tab.favicon ?? NSImage(systemSymbolName: "globe", accessibilityDescription: WebHubLanguage.text("Website"))
             faviconButton.imagePosition = .imageOnly
             faviconButton.imageScaling = .scaleProportionallyDown
-            faviconButton.isHidden = !showIcon
             faviconButton.translatesAutoresizingMaskIntoConstraints = false
             holder.addSubview(faviconButton)
 
@@ -642,13 +642,14 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             holder.removeAllToolTips()
             let tooltipOwner = TabToolTipOwner(controller: self, tab: tab)
             tab.tooltipOwner = tooltipOwner
-            holder.addToolTip(NSRect(x: 0, y: 0, width: 220, height: 26), owner: tooltipOwner, userData: nil)
+            holder.addToolTip(NSRect(x: 0, y: 0, width: Self.maxTabWidth, height: 26), owner: tooltipOwner, userData: nil)
 
-            let preferredTabWidth = holder.widthAnchor.constraint(equalToConstant: 220)
-            preferredTabWidth.priority = .defaultLow
+            let preferredTabWidth = holder.widthAnchor.constraint(equalToConstant: Self.maxTabWidth)
+            // 空间充足时先扩展标签，窗口变窄或标签过多时再压缩。
+            preferredTabWidth.priority = .defaultHigh
             NSLayoutConstraint.activate([
                 preferredTabWidth,
-                holder.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
+                holder.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxTabWidth),
                 holder.heightAnchor.constraint(equalToConstant: 26),
                 selectionButton.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
                 selectionButton.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
@@ -656,9 +657,9 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
                 selectionButton.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
                 faviconButton.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 7),
                 faviconButton.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
-                faviconButton.widthAnchor.constraint(equalToConstant: showIcon ? 20 : 0),
+                faviconButton.widthAnchor.constraint(equalToConstant: 20),
                 faviconButton.heightAnchor.constraint(equalToConstant: 20),
-                titleBtn.leadingAnchor.constraint(equalTo: faviconButton.trailingAnchor, constant: showIcon ? 4 : 2),
+                titleBtn.leadingAnchor.constraint(equalTo: faviconButton.trailingAnchor, constant: 4),
                 titleBtn.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
                 titleBtn.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -4),
                 closeBtn.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -5),
@@ -667,7 +668,17 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             ])
 
             tabStack.addArrangedSubview(holder)
+            // 每个标签平分可用宽度，避免 NSStackView 将内容绘制到自身边界之外。
+            holder.widthAnchor.constraint(equalTo: tabStack.widthAnchor, multiplier: 1 / CGFloat(tabs.count), constant: -tabStack.spacing * CGFloat(tabs.count - 1) / CGFloat(tabs.count)).isActive = true
         }
+        updateTabStackWidth()
+    }
+
+    private func updateTabStackWidth() {
+        guard tabStackWidth != nil, tabBar != nil else { return }
+        let available = max(0, tabBar.bounds.width - 94)
+        let preferred = CGFloat(tabs.count) * Self.maxTabWidth + CGFloat(max(tabs.count - 1, 0)) * tabStack.spacing
+        tabStackWidth.constant = min(available, preferred)
     }
 
     fileprivate func tooltipText(for tab: TabItem) -> String {
@@ -956,6 +967,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if let tab = tabs.first(where: { $0.webView === webView }) {
+            tab.favicon = nil
+            tab.faviconURL = nil
+            rebuildTabBar()
+        }
         updateToolbarState()
         updateAddress()
     }
@@ -965,7 +981,6 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         updateAddress()
 
         guard let tab = tabs.first(where: { $0.webView === webView }) else { return }
-        tab.showsRestoredIcon = false
         if let host = webView.url?.host {
             tab.title = webView.title?.isEmpty == false ? webView.title! : host
         }
@@ -1107,6 +1122,7 @@ extension RunnerWindowController: NSWindowDelegate {
     }
 
     func windowDidResize(_ notification: Notification) {
+        updateTabStackWidth()
         guard !isClamping, !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
         clampFrameToScreen()
         persistWindowFrame()

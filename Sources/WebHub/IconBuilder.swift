@@ -27,63 +27,74 @@ enum IconBuilder {
     static func nameIcon(name: String, accent: String, size: CGFloat = 1024) -> Data? {
         guard let rep = makeBitmap(size: size) else { return nil }
         draw(rep: rep, size: size, accent: accent) { rect in
-            var text = name.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
-            if text.isEmpty { text = "Web" }
-            if text.count > 64 { text = String(text.prefix(63)) + "…" }
-            let words = text.split(separator: " ").map(String.init)
-            var lines: [String] = [text]
-            if words.count > 1 {
-                let split = (1..<words.count).min { left, right in
-                    abs(words[..<left].joined(separator: " ").count - words[left...].joined(separator: " ").count)
-                        < abs(words[..<right].joined(separator: " ").count - words[right...].joined(separator: " ").count)
-                }!
-                lines = [words[..<split].joined(separator: " "), words[split...].joined(separator: " ")]
-            } else if text.count > 3 && text.unicodeScalars.contains(where: { (0x3400...0x9FFF).contains($0.value) }) {
-                let characters = Array(text)
-                let middle = (characters.count + 1) / 2
-                lines = [String(characters[..<middle]), String(characters[middle...])]
-            }
-            let usesWhiteText = accent.uppercased() != "#FFFFFF"
-            let color = usesWhiteText ? NSColor.white.withAlphaComponent(0.96) : NSColor.darkGray
-            var fontSize = rect.width * 0.33
-            var attrs: [NSAttributedString.Key: Any] = [:]
-            var rendered: [NSAttributedString] = []
-            repeat {
-                attrs = [.font: NSFont.systemFont(ofSize: fontSize, weight: .semibold), .foregroundColor: color]
-                if usesWhiteText {
-                    let shadow = NSShadow()
-                    shadow.shadowColor = NSColor.black.withAlphaComponent(0.62)
-                    shadow.shadowBlurRadius = rect.width * 0.012
-                    shadow.shadowOffset = NSSize(width: 0, height: -rect.width * 0.004)
-                    attrs[.shadow] = shadow
-                }
-                rendered = lines.map { NSAttributedString(string: $0, attributes: attrs) }
-                if rendered.allSatisfy({ $0.size().width <= rect.width * 0.82 }) { break }
-                fontSize -= rect.width * 0.01
-            } while fontSize >= rect.width * 0.12
-            for index in rendered.indices where rendered[index].size().width > rect.width * 0.82 {
-                var shortened = lines[index]
-                let minimum = lines.count == 1 ? min(4, shortened.count) : min(2, shortened.count)
-                while shortened.count > minimum && rendered[index].size().width > rect.width * 0.82 {
-                    shortened.removeLast()
-                    rendered[index] = NSAttributedString(string: shortened + "…", attributes: attrs)
-                }
-                if rendered[index].size().width > rect.width * 0.82 {
-                    let ratio = rect.width * 0.82 / rendered[index].size().width
-                    var smallerAttrs = attrs
-                    smallerAttrs[.font] = NSFont.systemFont(ofSize: fontSize * ratio * 0.98, weight: .semibold)
-                    rendered[index] = NSAttributedString(string: shortened + (shortened.count < lines[index].count ? "…" : ""), attributes: smallerAttrs)
-                }
-            }
-            let lineHeight = rendered.map { $0.size().height }.max() ?? 0
-            let totalHeight = lineHeight * CGFloat(rendered.count)
-            for (index, line) in rendered.enumerated() {
-                let y = rect.midY + totalHeight / 2 - lineHeight * CGFloat(index + 1)
-                line.draw(at: NSPoint(x: rect.midX - line.size().width / 2, y: y))
-            }
+            drawName(name, accent: accent, in: rect)
             return true
         }
         return png(from: rep)
+    }
+
+    private static func lineLengthDifference(words: [String], split: Int) -> Int {
+        let first = words[..<split].joined(separator: " ").count
+        let second = words[split...].joined(separator: " ").count
+        return abs(first - second)
+    }
+
+    private static func drawName(_ name: String, accent: String, in rect: CGRect) {
+        var text = name.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        if text.isEmpty { text = "Web" }
+        if text.count > 64 { text = String(text.prefix(63)) + "…" }
+        let words = text.split(separator: " ").map(String.init)
+        var lines: [String] = [text]
+        if words.count > 1 {
+            let split = (1..<words.count).min { left, right in
+                let leftDifference = lineLengthDifference(words: words, split: left)
+                let rightDifference = lineLengthDifference(words: words, split: right)
+                return leftDifference < rightDifference
+            }!
+            lines = [words[..<split].joined(separator: " "), words[split...].joined(separator: " ")]
+        } else if text.count > 3 && text.unicodeScalars.contains(where: { (0x3400...0x9FFF).contains($0.value) }) {
+            let characters = Array(text)
+            let middle = (characters.count + 1) / 2
+            lines = [String(characters[..<middle]), String(characters[middle...])]
+        }
+        let usesWhiteText = accent.uppercased() != "#FFFFFF"
+        let color = usesWhiteText ? NSColor.white.withAlphaComponent(0.96) : NSColor.darkGray
+        var fontSize = rect.width * 0.33
+        var attrs: [NSAttributedString.Key: Any] = [:]
+        var rendered: [NSAttributedString] = []
+        repeat {
+            attrs = [.font: NSFont.systemFont(ofSize: fontSize, weight: .semibold), .foregroundColor: color]
+            if usesWhiteText {
+                let shadow = NSShadow()
+                shadow.shadowColor = NSColor.black.withAlphaComponent(0.62)
+                shadow.shadowBlurRadius = rect.width * 0.012
+                shadow.shadowOffset = NSSize(width: 0, height: -rect.width * 0.004)
+                attrs[.shadow] = shadow
+            }
+            rendered = lines.map { NSAttributedString(string: $0, attributes: attrs) }
+            if rendered.allSatisfy({ $0.size().width <= rect.width * 0.82 }) { break }
+            fontSize -= rect.width * 0.01
+        } while fontSize >= rect.width * 0.12
+        for index in rendered.indices where rendered[index].size().width > rect.width * 0.82 {
+            var shortened = lines[index]
+            let minimum = lines.count == 1 ? min(4, shortened.count) : min(2, shortened.count)
+            while shortened.count > minimum && rendered[index].size().width > rect.width * 0.82 {
+                shortened.removeLast()
+                rendered[index] = NSAttributedString(string: shortened + "…", attributes: attrs)
+            }
+            if rendered[index].size().width > rect.width * 0.82 {
+                let ratio = rect.width * 0.82 / rendered[index].size().width
+                var smallerAttrs = attrs
+                smallerAttrs[.font] = NSFont.systemFont(ofSize: fontSize * ratio * 0.98, weight: .semibold)
+                rendered[index] = NSAttributedString(string: shortened + (shortened.count < lines[index].count ? "…" : ""), attributes: smallerAttrs)
+            }
+        }
+        let lineHeight = rendered.map { $0.size().height }.max() ?? 0
+        let totalHeight = lineHeight * CGFloat(rendered.count)
+        for (index, line) in rendered.enumerated() {
+            let y = rect.midY + totalHeight / 2 - lineHeight * CGFloat(index + 1)
+            line.draw(at: NSPoint(x: rect.midX - line.size().width / 2, y: y))
+        }
     }
 
     // MARK: - 内部

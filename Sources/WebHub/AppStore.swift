@@ -56,6 +56,7 @@ struct Bookmark: Codable {
     var id: UUID
     var title: String
     var url: String
+    var iconData: Data? = nil
 }
 
 struct TabSession: Codable {

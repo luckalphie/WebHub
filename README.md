@@ -13,8 +13,9 @@ This is an independent project and is not affiliated with Apple, Google, or any 
 - **Application center** — a grid of site tiles. Choose a generated name icon or a website icon, either fetched automatically or from a custom image URL. Generated icons crop transparent padding and scale the artwork to fit.
 - **Real Dock icons** — every configured site becomes its own `.app` with a unique bundle identifier, so it appears in the Dock, in Launchpad, and in the app switcher like a native application.
 - **Independent windows** — each site opens in its own window with tabs, live website favicons, a tab menu for opening the page in the default browser, back / forward / reload / home buttons, and a copyable, read-only address bar. Hovering a tab shows its full title and, for loaded background tabs, the remaining time before unloading.
-- **Bookmarks** — save pages from a tab’s context menu in a per-site bookmarks bar; manage them with a right click.
+- **Bookmarks** — save pages from a tab’s context menu in a per-site bookmarks bar; drag to reorder and right-click to manage them. Available page icons are saved with the bookmarks.
 - **Languages** — English and Simplified Chinese, with system or menu selection.
+- **Appearance** — follow the system appearance or choose light or dark mode from the menu.
 - **Shared sign-in** — one `WKWebsiteDataStore` for the whole process, so cookies, `localStorage`, `IndexedDB`, and service workers are literally the same data across all sites. Not synchronized copies: the same file.
 - **Password autofill** — credentials are saved in the macOS Keychain and injected at document start with native setters and composed events, so React and Vue forms pick them up.
 - **Per-site quit** — quitting a site window (⌘Q or the red button) closes only that site and removes only its Dock icon. Quitting the application center quits everything.

@@ -696,6 +696,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
               let iconURL = URL(string: url),
               ["http", "https"].contains(iconURL.scheme?.lowercased() ?? "") else { return }
         let requestedURL = iconURL.absoluteString
+        let pageURL = webView.url?.absoluteString
         tab.faviconURL = requestedURL
         IconFetcher.fetchIcon(from: requestedURL) { [weak self, weak tab, weak webView] png in
             guard let self = self, let tab = tab, let webView = webView,
@@ -703,6 +704,9 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
                   tab.faviconURL == requestedURL else { return }
             tab.favicon = png.flatMap(NSImage.init(data:))
             self.rebuildTabBar()
+            if let png = png, let pageURL = pageURL, webView.url?.absoluteString == pageURL {
+                self.updateBookmarkIcon(png, for: pageURL)
+            }
         }
     }
 

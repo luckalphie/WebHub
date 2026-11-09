@@ -132,11 +132,13 @@ extension RunnerWindowController {
             alert.runModal()
             return
         }
+        var iconData: Data?
         if let icon = tab.favicon?.copy() as? NSImage {
+            iconData = IconFetcher.pngData(from: icon, size: 64)
             icon.size = NSSize(width: 16, height: 16)
             bookmarkIcons[url] = icon
         }
-        items.append(Bookmark(id: UUID(), title: tab.title, url: url))
+        items.append(Bookmark(id: UUID(), title: tab.title, url: url, iconData: iconData))
         saveBookmarks(items)
     }
 
@@ -164,6 +166,7 @@ extension RunnerWindowController {
                 button.bezelStyle = .inline
                 button.imagePosition = .imageLeading
                 button.imageScaling = .scaleProportionallyDown
+                button.setContentCompressionResistancePriority(.required, for: .horizontal)
                 button.identifier = identifier
                 button.toolTip = bookmark.url
                 let menu = NSMenu()
@@ -175,6 +178,10 @@ extension RunnerWindowController {
                 }
                 button.menu = menu
             }
+            if bookmarkIcons[bookmark.url] == nil, let data = bookmark.iconData, let image = NSImage(data: data) {
+                image.size = NSSize(width: 16, height: 16)
+                bookmarkIcons[bookmark.url] = image
+            }
             button.image = bookmarkIcons[bookmark.url] ?? NSImage(systemSymbolName: "globe", accessibilityDescription: WebHubLanguage.text("Website"))
             fetchBookmarkIcon(for: bookmark.url, retry: false)
             let currentIndex = stack.arrangedSubviews.firstIndex(of: button)
@@ -183,7 +190,17 @@ extension RunnerWindowController {
                 stack.insertArrangedSubview(button, at: index)
             }
         }
-        stack.frame = NSRect(x: 0, y: 0, width: max(stack.fittingSize.width, 1), height: 30)
+        updateBookmarkBarWidth()
+    }
+
+    private func updateBookmarkBarWidth() {
+        guard let stack = bookmarkStack else { return }
+        // 书签栏需要横向滚动，不能让容器宽度不足时把按钮标题压没。
+        let buttons = stack.arrangedSubviews.filter { !$0.isHidden }
+        let width = buttons.reduce(CGFloat.zero) { $0 + $1.fittingSize.width }
+            + CGFloat(max(0, buttons.count - 1)) * stack.spacing
+        stack.setFrameSize(NSSize(width: max(ceil(width), 1), height: 30))
+        stack.layoutSubtreeIfNeeded()
     }
 
     func reorderBookmark(_ id: UUID, to targetIndex: Int) {
@@ -196,27 +213,40 @@ extension RunnerWindowController {
         saveBookmarks(items)
     }
 
+    // 网页实际加载出的图标优先于后台抓取的站点图标，同时写入书签和备份。
+    func updateBookmarkIcon(_ data: Data, for address: String) {
+        guard let image = NSImage(data: data), let png = IconFetcher.pngData(from: image, size: 64) else { return }
+        var items = AppStore.shared.bookmarks(for: appID)
+        guard let index = items.firstIndex(where: { $0.url == address }) else { return }
+        image.size = NSSize(width: 16, height: 16)
+        bookmarkIcons[address] = image
+        for case let button as NSButton in bookmarkStack.arrangedSubviews where button.toolTip == address {
+            button.image = image
+        }
+        updateBookmarkBarWidth()
+        guard items[index].iconData != png else { return }
+        items[index].iconData = png
+        do {
+            if try !AppStore.shared.saveBookmarks(items, for: appID) {
+                NSLog("WebHub: Failed to back up bookmark icon")
+            }
+        } catch {
+            NSLog("WebHub: Failed to save bookmark icon: %@", error.localizedDescription)
+        }
+    }
+
     private func fetchBookmarkIcon(for address: String, retry: Bool) {
         guard bookmarkIcons[address] == nil, !bookmarkIconsInFlight.contains(address),
               retry || !bookmarkIconRequests.contains(address),
               let url = URL(string: address), let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme), let host = url.host else { return }
-        var origin = URLComponents()
-        origin.scheme = scheme
-        origin.host = host
-        origin.port = url.port
-        guard let originURL = origin.url else { return }
+              ["http", "https"].contains(scheme), url.host != nil else { return }
         bookmarkIconRequests.insert(address)
         bookmarkIconsInFlight.insert(address)
-        IconFetcher.fetch(for: originURL.absoluteString) { [weak self] data in
+        IconFetcher.fetch(for: address) { [weak self] data in
             guard let self = self else { return }
             self.bookmarkIconsInFlight.remove(address)
-            guard let data = data, let image = NSImage(data: data) else { return }
-            image.size = NSSize(width: 16, height: 16)
-            self.bookmarkIcons[address] = image
-            for case let button as NSButton in self.bookmarkStack.arrangedSubviews where button.toolTip == address {
-                button.image = image
-            }
+            guard self.bookmarkIcons[address] == nil, let data = data else { return }
+            self.updateBookmarkIcon(data, for: address)
         }
     }
 

@@ -72,7 +72,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     var bookmarkIcons: [String: NSImage] = [:]
     var bookmarkIconRequests: Set<String> = []
     var bookmarkIconsInFlight: Set<String> = []
-    var bookmarkBar: NSScrollView!
+    var bookmarkBar: BookmarkScrollView!
     var bookmarkBarHeight: NSLayoutConstraint!
     var bookmarkStack: NSStackView!
     private var contentHost: NSView!
@@ -242,7 +242,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         tabStack.setHuggingPriority(.defaultLow, for: .horizontal)
         tabBar.addSubview(tabStack)
 
-        bookmarkBar = NSScrollView()
+        bookmarkBar = BookmarkScrollView()
+        bookmarkBar.onBookmarkDrop = { [weak self] id, index in
+            self?.reorderBookmark(id, to: index)
+        }
         bookmarkBar.translatesAutoresizingMaskIntoConstraints = false
         bookmarkBar.hasHorizontalScroller = true
         bookmarkBar.autohidesScrollers = true

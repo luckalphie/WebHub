@@ -393,6 +393,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         cfg.userContentController.add(self, name: "tab")
 
         let wv = WKWebView(frame: .zero, configuration: cfg)
+        wv.isInspectable = true
         wv.navigationDelegate = self
         wv.uiDelegate = self
         wv.allowsBackForwardNavigationGestures = true
@@ -541,14 +542,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
         contentHost.subviews.forEach { $0.removeFromSuperview() }
         let webView = loadTab(tab)
-        webView.translatesAutoresizingMaskIntoConstraints = false
+        // WebKit 停靠检查器时会调整网页视图的布局；固定四边约束会遮住检查器。
+        webView.translatesAutoresizingMaskIntoConstraints = true
+        webView.frame = contentHost.bounds
+        webView.autoresizingMask = [.width, .height]
         contentHost.addSubview(webView)
-        NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: contentHost.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor)
-        ])
 
         rebuildTabBar()
         updateAddress()
@@ -863,6 +861,9 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         menu.addItem(withTitle: WebHubLanguage.text("Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         menu.addItem(withTitle: WebHubLanguage.text("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         menu.addItem(withTitle: WebHubLanguage.text("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let pastePlain = NSMenuItem(title: WebHubLanguage.text("Paste and Match Style"), action: #selector(NSTextView.pasteAsPlainText(_:)), keyEquivalent: "v")
+        pastePlain.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(pastePlain)
         menu.addItem(withTitle: WebHubLanguage.text("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         return menu
     }

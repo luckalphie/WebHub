@@ -50,6 +50,9 @@
   }
   .brand span { font-size: 12.5px; color: rgba(255,255,255,.52); letter-spacing: .3px; }
   .hint { font-size: 12px; color: rgba(255,255,255,.42); }
+  .header-actions { display: flex; align-items: center; gap: 16px; }
+  .settings-button { border: 1px solid rgba(255,255,255,.18); border-radius: 9px; padding: 6px 10px; background: rgba(255,255,255,.08); color: inherit; font: inherit; font-size: 12px; }
+  .settings-button:hover { background: rgba(255,255,255,.16); }
 
   /* 网格 */
   .gridwrap {
@@ -233,6 +236,8 @@
     .brand h1, .name { text-shadow: none; }
     .brand span { color: rgba(35,48,69,.6); }
     .hint, .empty { color: rgba(35,48,69,.58); }
+    .settings-button { color: #243047; border-color: rgba(45,60,82,.2); background: rgba(255,255,255,.45); }
+    .settings-button:hover { background: rgba(255,255,255,.75); }
     .gridwrap::-webkit-scrollbar-thumb { background-color: rgba(35,48,69,.25); }
     .app.drop-target::before { border-color: rgba(35,48,69,.5); }
     .icon { box-shadow: 0 10px 26px rgba(46,65,94,.2), 0 1px 0 rgba(255,255,255,.5) inset; }
@@ -276,13 +281,30 @@
       <h1>WebHub</h1>
       <span id="count"></span>
     </div>
-    <div class="hint">Click to open · Right-click to manage · Drag to reorder</div>
+    <div class="header-actions">
+      <div class="hint">Click to open · Right-click to manage · Drag to reorder</div>
+      <button type="button" class="settings-button" id="settingsButton">Settings</button>
+    </div>
   </header>
   <div class="gridwrap">
     <div class="grid" id="grid"></div>
     <div class="empty" id="empty" style="display:none">
       No apps yet.<br>Click + or right-click the background to add your first website.
     </div>
+  </div>
+</div>
+
+<div class="sheet-mask" id="settingsMask">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <h2 id="settingsTitle">Settings</h2>
+    <div class="field">
+      <div class="login-setting-row">
+        <span class="login-setting-title" id="standaloneLabel">Create Standalone Apps</span>
+        <label class="login-toggle"><input id="standaloneApps" type="checkbox" aria-labelledby="standaloneLabel" disabled><span class="login-switch"></span></label>
+      </div>
+      <div class="tip">Create launchable apps in ~/Applications/WebHub Apps. When off, sites still have Dock icons while open.</div>
+    </div>
+    <div class="sheet-actions"><button type="button" class="btn" id="closeSettings">Done</button></div>
   </div>
 </div>
 
@@ -373,6 +395,15 @@ const grid = document.getElementById('grid');
 const empty = document.getElementById('empty');
 const menu = document.getElementById('menu');
 const mask = document.getElementById('mask');
+const settingsMask = document.getElementById('settingsMask');
+const standaloneApps = document.getElementById('standaloneApps');
+document.getElementById('settingsButton').addEventListener('click', () => settingsMask.classList.add('show'));
+document.getElementById('closeSettings').addEventListener('click', () => settingsMask.classList.remove('show'));
+settingsMask.addEventListener('click', event => { if (event.target === settingsMask) settingsMask.classList.remove('show'); });
+standaloneApps.addEventListener('change', () => {
+  standaloneApps.disabled = true;
+  post('setStandaloneApps', { enabled: standaloneApps.checked });
+});
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
@@ -579,11 +610,15 @@ btnSave.addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeSheet(); hideMenu(); }
+  if (e.key === 'Escape') { closeSheet(); hideMenu(); settingsMask.classList.remove('show'); }
   if (e.key === 'Enter' && mask.classList.contains('show')) btnSave.click();
 });
 
 // ---------- 来自原生 ----------
+window.hubSetStandaloneApps = function (enabled, busy) {
+  standaloneApps.checked = enabled;
+  standaloneApps.disabled = busy;
+};
 window.hubRender = function (json) {
   try {
     state = typeof json === 'string' ? JSON.parse(json) : json;

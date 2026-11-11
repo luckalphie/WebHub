@@ -18,22 +18,31 @@ final class ShimDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let info = Bundle.main.infoDictionary ?? [:]
-        appID = (info["WebHubAppID"] as? String) ?? ""
+        // 共用 Helper 不在 Info.plist 固定站点，站点 ID 由宿主通过启动参数传入。
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        appID = arguments.first ?? (info["WebHubAppID"] as? String) ?? ""
         appName = (info["WebHubAppName"] as? String)
             ?? (info["CFBundleDisplayName"] as? String) ?? "Web App"
+        if arguments.count > 1 {
+            let iconPath = arguments[1]
+            if let image = NSImage(contentsOfFile: iconPath) {
+                NSApp.applicationIconImage = image
+                NSApp.dockTile.display()
+            }
+        }
+        if arguments.count > 2, !arguments[2].isEmpty { appName = arguments[2] }
 
-        guard !appID.isEmpty else {
-            NSApp.terminate(nil)
-            return
+        // Launch Services 可能复用共用 Helper 的旧图标缓存。进程启动后
+        // 直接设置 Dock Tile，确保当前站点的图标立即显示。
+        if let iconFile = info["CFBundleIconFile"] as? String {
+            let name = iconFile.hasSuffix(".icns") ? iconFile : "\(iconFile).icns"
+            if let image = NSImage(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/\(name)")) {
+                NSApp.applicationIconImage = image
+                NSApp.dockTile.display()
+            }
         }
 
-        // 同站点已有 shim 在跑：让它去激活窗口，自己安静退出，避免出现两个 Dock 图标
-        let me = ProcessInfo.processInfo.processIdentifier
-        let siblings = NSRunningApplication
-            .runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
-            .filter { $0.processIdentifier != me }
-        if !siblings.isEmpty {
-            _ = send(WebHubIPC.Command.activate)
+        guard !appID.isEmpty else {
             NSApp.terminate(nil)
             return
         }

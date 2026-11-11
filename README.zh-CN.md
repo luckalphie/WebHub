@@ -11,7 +11,7 @@ Swift + WebKit 实现。打包产物面向 **Apple Silicon**，最低系统要�
 ## 功能
 
 - **应用中心** —— 站点磁贴网格。可选择生成名称图标，或使用网页图标；网页图标支持自动抓取和自定义图片 URL。合成图标会裁掉透明留白并放大主体。
-- **真实 Dock 图标** —— 每个站点生成独立 `.app` 和唯一 bundle 标识，因此在 Dock、启动台、应用切换器里都像一个原生应用。
+- **真实 Dock 图标** —— 打开的站点各有自己的 Dock 图标。全局开启「创建独立 App」后，还会在 `~/Applications/WebHub Apps` 中创建可直接启动的应用；默认关闭。
 - **独立窗口** —— 每个站点在自己的窗口里打开，标签页显示随网页更新的 favicon，右键可用默认浏览器打开页面；悬停标签可查看完整标题和已加载后台标签的卸载倒计时。窗口还提供前进 / 后退 / 刷新 / 主页按钮和可复制的只读地址栏。
 - **收藏栏** —— 通过标签页右键收藏页面，在各站点的收藏栏里拖动排序、右键管理；获取到的网页图标会随收藏保存。
 - **语言** —— 支持英文和简体中文，可跟随系统或在菜单中选择。
@@ -35,13 +35,13 @@ WebHub.app（唯一真正干活的进程）
         ▲
         │ CFMessagePort：open / activate / close
         │
-站点 shim 进程（"Slack.app"、"GitHub.app" …）
-    — 每站点一个，不建窗口、不加载 WebKit，只占 Dock 位
+共用 WebHub Helper 进程（"WebHubHelper.app"）
+    — 所有站点复用同一个 Helper，不建窗口、不加载 WebKit
 ```
 
 原因就是共享登录态。`WKWebsiteDataStore` 按宿主 bundle 标识分目录：两个不同 bundle 标识的进程必然拿到两个不同的数据目录，没有任何配置能改变这一点。多进程方案只能用「拷贝 cookie」去**逼近**共享，而把所有站点放进同一个进程，就是**真的**共享。
 
-于是每个站点的 `.app` 是一个 shim —— 等价于 Chrome 的 `app_mode_loader`。它把激活策略设为 `regular` 占住 Dock 位，发消息请宿主开窗，然后常驻直到被宿主结束。窗口归宿主所有；窗口一关，宿主就让对应的 shim 退出。
+关闭「创建独立 App」时，WebHub 只生成一个共用的 `WebHubHelper.app`，放在 `~/Library/Application Support/WebHub/runtime-shims/`。每次打开站点时通过启动参数把站点 ID 交给 Helper，再由它请求宿主开窗；窗口关闭后 Helper 进程退出。不会再按站点生成临时 `.app`。
 
 `Sources/WebHubIPC` 只放消息契约，所以 shim 永远不会链接宿主的 AppKit / WebKit 代码。
 
@@ -68,14 +68,15 @@ WebHub.app（唯一真正干活的进程）
 | 路径 | 内容 |
 | --- | --- |
 | `~/Library/Application Support/WebHub/apps.json` | 站点列表：名称、网址、图标来源、配色 |
-| `~/Library/Application Support/WebHub/bookmarks/<站点 ID>.json` | 每个站点的收藏 |
-| `~/Library/Application Support/WebHub/sessions/<站点 ID>.json` | 每个站点打开的标签 |
-| `~/Library/Application Support/WebHub/icons/` | 缓存的 favicon |
+| `~/Library/Application Support/WebHub/apps/<站点 ID>/` | 该站点的图标、会话、收藏和运行时图标 |
 | `~/Applications/WebHub Apps/` | 运行时生成的各站点 `.app` |
+| `~/Library/Application Support/WebHub/runtime-shims/` | 未开启独立 App 时使用的内部 Dock shim |
 | `~/Library/WebKit/cn.webhub.launcher/` | 共享数据仓库 —— 登录态就在这里 |
 | 钥匙串项 `cn.webhub.credentials` | 保存的用户名密码，按可注册域名一条 |
 
-`apps.json`、各站点会话和收藏会备份到 WebKit 数据目录。旧版 `sessions.json` 和 `bookmarks.json` 在各站点打开时迁移，旧文件会保留。
+`apps.json`、各站点目录及其会话和收藏会备份到 WebKit 数据目录。升级时旧版分散文件会自动迁移并清理。
+
+关闭「创建独立 App」会删除 `~/Applications/WebHub Apps` 中由 WebHub 创建的应用包；如有应用正在运行，会先询问是否关闭并删除。站点数据会保留。升级后首次启动时，默认关闭也会执行相同清理。
 
 WebHub 不含遥测和统计。唯一的网络活动是加载你配置的站点、以及抓取它们的 favicon。
 

@@ -8,10 +8,8 @@ import WebHubIPC
 /// 是同一份数据，不再需要任何跨进程同步，也不会有多个进程抢
 /// WebKit 进程而导致的 `CFRetain() called with NULL`。
 ///
-/// 每个站点仍然有一个独立的 `.app`，但它的角色退化成 Chrome 的
-/// `app_mode_loader`（见 Runner/main.swift 的 shim）：不建窗口、不加载
-/// WebKit，只负责在 Dock 里占一个图标，并在被点击时通过
-/// CFMessagePort 请本进程开窗。
+/// 关闭独立 App 时，所有站点复用一个 Helper（见 Runner/main.swift）：
+/// Helper 不建窗口、不加载 WebKit，只负责通过 CFMessagePort 请本进程开窗。
 final class SiteWindowManager {
 
     static let shared = SiteWindowManager()

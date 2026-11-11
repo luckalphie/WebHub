@@ -5,6 +5,37 @@ import WebHubIPC
 
 /// 把站点打包成独立的 .app，从而在 Dock 里拥有自己的图标
 enum RunnerPackager {
+    private static let standaloneKey = "WebHub.createStandaloneApps"
+    static var createsStandaloneApps: Bool {
+        get { UserDefaults.standard.bool(forKey: standaloneKey) }
+        set { UserDefaults.standard.set(newValue, forKey: standaloneKey) }
+    }
+    static var hasStandalonePreference: Bool { UserDefaults.standard.object(forKey: standaloneKey) != nil }
+    static var isChangingStandaloneApps = false
+    private static var runtimeDir: URL { AppStore.shared.rootDir.appendingPathComponent("runtime-shims", isDirectory: true) }
+    private static var runtimeHelperURL: URL { runtimeDir.appendingPathComponent("WebHubHelper.app", isDirectory: true) }
+
+    /// 微信式内嵌 Helper：固定使用主 App 资源中的 Helper，不复制到用户目录。
+    static var embeddedHelperURL: URL? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("WebHubRunner.app"),
+              FileManager.default.fileExists(atPath: url.appendingPathComponent("Contents/MacOS/WebHubRunner").path)
+        else { return nil }
+        return url
+    }
+
+    /// 生成当前站点最终使用的图标文件，供内嵌 Helper 启动时设置 Dock 图标。
+    private static func runtimeIconURL(for app: WebApp, iconPNG: Data?) -> URL? {
+        let fm = FileManager.default
+        let dir = AppStore.shared.appDataDir(for: app.id)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let glyphData = iconPNG ?? AppStore.shared.iconURL(for: app).flatMap { try? Data(contentsOf: $0) }
+        let glyph = glyphData.flatMap { NSImage(data: $0) }
+        guard let themedIcon = (app.effectiveIconMode == .website ? glyph.flatMap { IconBuilder.composeIcon(glyph: $0, accent: app.accent) } : nil)
+            ?? IconBuilder.nameIcon(name: app.name, accent: app.accent) else { return nil }
+        let url = dir.appendingPathComponent("runtime-icon.png")
+        guard (try? themedIcon.write(to: url)) != nil else { return nil }
+        return url
+    }
 
     static func runnerBinaryPath() -> String? {
         // 正式形态：打包脚本把 WebHubRunner.app 内嵌在宿主 Resources 里
@@ -36,8 +67,8 @@ enum RunnerPackager {
     /// 站点 .app 的路径。
     /// ⚠️ 包目录名必须用站点名而不是 UUID：Dock 在某些情况下（新建包、LS 缓存未及时刷新）
     /// 会回退用「包文件名」当悬停标签，UUID 目录名就会显示成一串乱码。
-    static func bundleURL(for app: WebApp) -> URL {
-        let dir = AppStore.shared.runnerDir
+    static func bundleURL(for app: WebApp, runtime: Bool = false) -> URL {
+        let dir = runtime ? AppStore.shared.appDataDir(for: app.id) : AppStore.shared.runnerDir
         let base = bundleName(for: app)
         // 保留已分配的同名冲突路径，避免其他应用删除后生成第二份站点包。
         if let entries = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil),
@@ -58,12 +89,98 @@ enum RunnerPackager {
         }
     }
 
-    private static func appID(in bundle: URL) -> String? {
+    static func appID(in bundle: URL) -> String? {
         let plist = bundle.appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: plist),
               let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
               let dict = obj as? [String: Any] else { return nil }
-        return dict["WebHubAppID"] as? String
+        guard let id = dict["WebHubAppID"] as? String, UUID(uuidString: id) != nil,
+              dict["CFBundleIdentifier"] as? String == "cn.webhub.runner.\(id)" else { return nil }
+        return id
+    }
+
+    static func standaloneBundles() throws -> [URL] {
+        let dir = AppStore.shared.runnerDir
+        return try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isSymbolicLinkKey])
+            .filter { url in
+                url.pathExtension == "app" && (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true && appID(in: url) != nil
+            }
+    }
+
+    static func deleteStandaloneBundles(_ bundles: [URL]) throws {
+        for url in bundles {
+            guard appID(in: url) != nil else { continue }
+            try FileManager.default.removeItem(at: url)
+            deregister(url.path)
+        }
+    }
+
+    /// 未开启独立 App 时只使用一个共用 Helper。Helper 不保存站点身份，
+    /// 站点 ID 通过启动参数传入，因此不会为每个站点生成临时 .app。
+    static func ensureRuntimeHelper(for app: WebApp, iconPNG: Data?) -> URL? {
+        let fm = FileManager.default
+        let bundleURL = runtimeHelperURL
+        let macosDir = bundleURL.appendingPathComponent("Contents/MacOS")
+        do { try fm.createDirectory(at: macosDir, withIntermediateDirectories: true) } catch { return nil }
+        guard let src = runnerBinaryPath(),
+              let size = (try? fm.attributesOfItem(atPath: src))?[.size] as? NSNumber,
+              size.intValue >= 50_000 else { return nil }
+        let dest = macosDir.appendingPathComponent("WebHubRunner")
+        if (try? Data(contentsOf: URL(fileURLWithPath: src))) != (try? Data(contentsOf: dest)) {
+            try? fm.removeItem(at: dest)
+            guard (try? fm.copyItem(atPath: src, toPath: dest.path)) != nil else { return nil }
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
+        }
+        let resDir = bundleURL.appendingPathComponent("Contents/Resources")
+        do { try fm.createDirectory(at: resDir, withIntermediateDirectories: true) } catch { return nil }
+        let glyphData = iconPNG ?? AppStore.shared.iconURL(for: app).flatMap { try? Data(contentsOf: $0) }
+        let glyph = glyphData.flatMap { NSImage(data: $0) }
+        let themedIcon = (app.effectiveIconMode == .website ? glyph.flatMap { IconBuilder.composeIcon(glyph: $0, accent: app.accent) } : nil)
+            ?? IconBuilder.nameIcon(name: app.name, accent: app.accent)
+        var iconName = "AppIcon"
+        if let png = themedIcon {
+            let hash = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
+            iconName = "AppIcon-\(hash.prefix(12))"
+            let icnsURL = resDir.appendingPathComponent("\(iconName).icns")
+            if !IconBuilder.icns(fromPNG: png, to: icnsURL) { iconName = "AppIcon" }
+            if let resources = try? fm.contentsOfDirectory(at: resDir, includingPropertiesForKeys: nil) {
+                for oldIcon in resources where oldIcon.pathExtension == "icns" && oldIcon != icnsURL {
+                    try? fm.removeItem(at: oldIcon)
+                }
+            }
+        }
+        let info: [String: Any] = [
+            "CFBundleExecutable": "WebHubRunner",
+            "CFBundleIdentifier": "cn.webhub.runtime-helper",
+            "CFBundleName": app.name,
+            "CFBundleDisplayName": app.name,
+            "CFBundleIconFile": iconName,
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "1.0",
+            "CFBundleVersion": "1",
+            "LSMinimumSystemVersion": "14.0",
+            "NSHighResolutionCapable": true,
+            "LSUIElement": false,
+            WebHubIPC.hostPathKey: Bundle.main.bundlePath
+        ]
+        let plistURL = bundleURL.appendingPathComponent("Contents/Info.plist")
+        guard (info as NSDictionary).write(to: plistURL, atomically: true) else { return nil }
+        let sign = Process()
+        sign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        sign.arguments = ["--force", "--deep", "--sign", "-", bundleURL.path]
+        sign.standardError = FileHandle.nullDevice
+        sign.standardOutput = FileHandle.nullDevice
+        try? sign.run(); sign.waitUntilExit()
+        register(bundleURL.path)
+        return bundleURL
+    }
+
+    /// 清理旧版本生成在 Application Support 中的 runtime shim。
+    static func removeLegacyRuntimeShims() {
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: runtimeDir, includingPropertiesForKeys: nil) else { return }
+        for entry in entries where entry.pathExtension == "app" {
+            try? FileManager.default.removeItem(at: entry)
+        }
     }
 
     /// 只迁移能确认属于现有站点的旧应用，不覆盖目标目录中的其他文件。
@@ -130,10 +247,11 @@ enum RunnerPackager {
 
     /// 生成（或更新）某站点的独立 app 包，返回可 open 的 URL
     @discardableResult
-    static func ensureApp(for app: WebApp, iconPNG: Data?) -> URL? {
+    static func ensureApp(for app: WebApp, iconPNG: Data?, runtime: Bool = false) -> URL? {
+        guard !isChangingStandaloneApps, runtime || createsStandaloneApps else { return nil }
         let fm = FileManager.default
         let store = AppStore.shared
-        let bundleURL = bundleURL(for: app)
+        let bundleURL = bundleURL(for: app, runtime: runtime)
         let existed = fm.fileExists(atPath: bundleURL.path)
 
         // 已经是最新的包：不覆盖二进制、不重签，直接启动。
@@ -146,7 +264,7 @@ enum RunnerPackager {
         }
 
         // 站点改名后旧包要清掉，否则 Dock 里会多留一个旧名字的图标
-        if let siblings = try? fm.contentsOfDirectory(at: store.runnerDir,
+        if let siblings = try? fm.contentsOfDirectory(at: runtime ? runtimeDir : store.runnerDir,
                                                       includingPropertiesForKeys: nil) {
             var removed = false
             for url in siblings where url.pathExtension == "app"
@@ -160,7 +278,7 @@ enum RunnerPackager {
                 try? fm.removeItem(at: url)
                 removed = true
             }
-            if removed { restartDock() }
+            if removed && !runtime { restartDock() }
         }
         let macosDir = bundleURL.appendingPathComponent("Contents/MacOS")
         let resDir = bundleURL.appendingPathComponent("Contents/Resources")
@@ -258,7 +376,7 @@ enum RunnerPackager {
             try? stamp.write(to: stampURL(bundleURL), atomically: true, encoding: .utf8)
         }
         register(bundleURL.path)
-        if !existed { restartDock() }
+        if !existed && !runtime { restartDock() }
 
         return bundleURL
     }
@@ -286,7 +404,7 @@ enum RunnerPackager {
 
     static func removeApp(_ app: WebApp) {
         let dir = AppStore.shared.runnerDir
-        for url in [dir.appendingPathComponent("\(app.id).app"), bundleURL(for: app)] {
+        for url in [dir.appendingPathComponent("\(app.id).app"), bundleURL(for: app), bundleURL(for: app, runtime: true)] {
             guard appID(in: url) == app.id else { continue }
             deregister(url.path)
             try? FileManager.default.removeItem(at: url)
@@ -295,8 +413,22 @@ enum RunnerPackager {
 
     /// 打开站点窗口
     static func launch(app: WebApp) {
+        guard !isChangingStandaloneApps else { return }
+        if SiteWindowManager.shared.openSiteIDs.contains(app.id) {
+            SiteWindowManager.shared.activate(app.id)
+            return
+        }
         let iconData = AppStore.shared.iconURL(for: app).flatMap { try? Data(contentsOf: $0) }
-        guard let bundle = ensureApp(for: app, iconPNG: iconData) else { return }
+        let bundle: URL
+        if createsStandaloneApps {
+            guard let standalone = ensureApp(for: app, iconPNG: iconData) else { return }
+            bundle = standalone
+        } else {
+            // 实验方案：站点目录中的轻量 DockIdentity.app 只提供标题和图标，
+            // 运行器仍是同一个 Helper，网页窗口继续由 WebHub 宿主统一管理。
+            guard let identity = ensureApp(for: app, iconPNG: iconData, runtime: true) else { return }
+            bundle = identity
+        }
         let cfg = NSWorkspace.OpenConfiguration()
         cfg.activates = true
         NSWorkspace.shared.openApplication(at: bundle, configuration: cfg) { _, error in

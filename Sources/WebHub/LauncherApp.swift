@@ -12,6 +12,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     private var changingFullScreen = false
     /// 单宿主下菜单是全局的，站点窗口会挂上自己那份；切回应用中心时要还原
     private var launcherMenu: NSMenu?
+    private var changingStandaloneApps = false
 
     func show() {
         let config = WKWebViewConfiguration()
@@ -54,6 +55,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         }
 
         buildMenu()
+        if !RunnerPackager.hasStandalonePreference {
+            DispatchQueue.main.async { [weak self] in self?.disableStandaloneApps() }
+        }
         installPasteShortcut()
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
                                                name: NSApplication.didBecomeActiveNotification, object: nil)
@@ -180,6 +184,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         ready = true
         refresh()
         refreshRunning()
+        updateStandaloneControl()
     }
 
     // MARK: 消息桥
@@ -191,6 +196,10 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         let store = AppStore.shared
 
         switch type {
+        case "setStandaloneApps":
+            guard let enabled = body["enabled"] as? Bool else { return }
+            setStandaloneApps(enabled)
+
         case "open":
             guard let id = body["id"] as? String,
                   let app = store.apps.first(where: { $0.id == id }) else { return }
@@ -421,7 +430,6 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
         mainMenu.addItem(LanguageMenu.shared.makeItem())
         mainMenu.addItem(AppearanceMenu.shared.makeItem())
-
         launcherMenu = mainMenu
         NSApplication.shared.mainMenu = mainMenu
     }
@@ -439,6 +447,114 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     func restoreMenu() {
         guard let m = launcherMenu else { return }
         NSApplication.shared.mainMenu = m
+    }
+
+    private func setStandaloneApps(_ enabled: Bool) {
+        guard !changingStandaloneApps else { updateStandaloneControl(); return }
+        guard enabled != RunnerPackager.createsStandaloneApps else { updateStandaloneControl(); return }
+        if !enabled {
+            disableStandaloneApps()
+        } else {
+            RunnerPackager.createsStandaloneApps = true
+            updateStandaloneControl()
+            createStandaloneApps(AppStore.shared.apps)
+        }
+    }
+
+    private func updateStandaloneControl() {
+        guard ready else { return }
+        eval("window.hubSetStandaloneApps(\(RunnerPackager.createsStandaloneApps), \(changingStandaloneApps))")
+    }
+
+    private func createStandaloneApps(_ apps: [WebApp], index: Int = 0) {
+        guard RunnerPackager.createsStandaloneApps, !changingStandaloneApps, index < apps.count else { return }
+        guard let current = AppStore.shared.apps.first(where: { $0.id == apps[index].id }) else {
+            createStandaloneApps(apps, index: index + 1)
+            return
+        }
+        if RunnerPackager.ensureApp(for: current, iconPNG: nil) == nil {
+            let alert = NSAlert()
+            alert.messageText = WebHubLanguage.format("Unable to create standalone app for %@", current.name)
+            alert.runModal()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.createStandaloneApps(apps, index: index + 1)
+        }
+    }
+
+    private func disableStandaloneApps() {
+        guard !changingStandaloneApps else { return }
+        let bundles: [URL]
+        do { bundles = try RunnerPackager.standaloneBundles() }
+        catch {
+            RunnerPackager.createsStandaloneApps = true
+            updateStandaloneControl()
+            showStandaloneError(error)
+            return
+        }
+        let paths = Set(bundles.map { $0.resolvingSymlinksInPath().path })
+        let running = NSWorkspace.shared.runningApplications.filter {
+            guard let url = $0.bundleURL else { return false }
+            return paths.contains(url.resolvingSymlinksInPath().path) && !$0.isTerminated
+        }
+        if !running.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = WebHubLanguage.text("Quit running standalone apps?")
+            alert.informativeText = WebHubLanguage.text("Running site windows will close and their standalone apps will be removed. Site data will be kept.")
+            alert.addButton(withTitle: WebHubLanguage.text("Quit and Remove"))
+            alert.addButton(withTitle: WebHubLanguage.text("Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                RunnerPackager.createsStandaloneApps = true
+                updateStandaloneControl()
+                return
+            }
+        }
+        changingStandaloneApps = true
+        RunnerPackager.isChangingStandaloneApps = true
+        updateStandaloneControl()
+        for process in running {
+            if let url = process.bundleURL, let id = RunnerPackager.appID(in: url), SiteWindowManager.shared.openSiteIDs.contains(id) {
+                SiteWindowManager.shared.close(id)
+            }
+            if !process.isTerminated { kill(process.processIdentifier, SIGTERM) }
+        }
+        finishDisablingStandaloneApps(bundles, running: running, deadline: Date().addingTimeInterval(5))
+    }
+
+    private func finishDisablingStandaloneApps(_ bundles: [URL], running: [NSRunningApplication], deadline: Date) {
+        if running.contains(where: { !$0.isTerminated }) {
+            if Date() < deadline {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.finishDisablingStandaloneApps(bundles, running: running, deadline: deadline)
+                }
+                return
+            }
+            changingStandaloneApps = false
+            RunnerPackager.isChangingStandaloneApps = false
+            RunnerPackager.createsStandaloneApps = true
+            updateStandaloneControl()
+            let alert = NSAlert()
+            alert.messageText = WebHubLanguage.text("Some standalone apps did not quit")
+            alert.informativeText = WebHubLanguage.text("No standalone apps were removed. Close them and try again.")
+            alert.runModal()
+            return
+        }
+        do {
+            try RunnerPackager.deleteStandaloneBundles(bundles)
+            RunnerPackager.createsStandaloneApps = false
+        } catch {
+            RunnerPackager.createsStandaloneApps = true
+            showStandaloneError(error)
+        }
+        changingStandaloneApps = false
+        RunnerPackager.isChangingStandaloneApps = false
+        updateStandaloneControl()
+    }
+
+    private func showStandaloneError(_ error: Error) {
+        let alert = NSAlert(error: error)
+        alert.messageText = WebHubLanguage.text("Unable to remove standalone apps")
+        alert.runModal()
     }
 
     @objc private func addApp() {

@@ -80,15 +80,26 @@ final class AppStore {
     private var appsFile: URL { rootDir.appendingPathComponent("apps.json") }
     private var sessionsFile: URL { rootDir.appendingPathComponent("sessions.json") }
 
+    /// 每个站点独立的数据目录。目录名使用稳定的 app id，不使用可变的站点名称。
+    func appDataDir(for id: String) -> URL {
+        rootDir.appendingPathComponent("apps", isDirectory: true).appendingPathComponent(safeStorageName(id), isDirectory: true)
+    }
+
+    private func safeStorageName(_ id: String) -> String {
+        if UUID(uuidString: id) != nil { return id.lowercased() }
+        return "id-" + id.utf8.map { String(format: "%02x", $0) }.joined()
+    }
+
     private init() {
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         rootDir = base.appendingPathComponent("WebHub", isDirectory: true)
         iconsDir = rootDir.appendingPathComponent("icons", isDirectory: true)
         runnerDir = fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/WebHub Apps", isDirectory: true)
-        for dir in [rootDir, iconsDir, runnerDir] {
+        for dir in [rootDir, runnerDir, rootDir.appendingPathComponent("apps", isDirectory: true)] {
             try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
         load()
+        migrateLegacyStorage()
     }
 
     // MARK: 读写
@@ -134,6 +145,28 @@ final class AppStore {
             try? fm.createDirectory(at: rootDir, withIntermediateDirectories: true)
             try? data.write(to: appsFile, options: .atomic)
             try? data.write(to: appsBackupFile, options: .atomic)
+        }
+    }
+
+    /// 将旧版分散文件按站点迁移到 apps/<app-id>/，成功后清理空目录和旧文件。
+    private func migrateLegacyStorage() {
+        for app in apps {
+            _ = iconURL(for: app)
+            _ = bookmarks(for: app.id)
+            _ = session(for: app.id)
+        }
+        let legacyPaths = [
+            bookmarksFile, sessionsFile,
+            rootDir.appendingPathComponent("bookmarks", isDirectory: true),
+            rootDir.appendingPathComponent("sessions", isDirectory: true),
+            iconsDir,
+            bookmarksBackupFile, sessionsBackupFile,
+            backupDir.appendingPathComponent("bookmarks", isDirectory: true),
+            backupDir.appendingPathComponent("sessions", isDirectory: true),
+            rootDir.appendingPathComponent("runtime-shims", isDirectory: true)
+        ]
+        for path in legacyPaths {
+            if fm.fileExists(atPath: path.path) { try? fm.removeItem(at: path) }
         }
     }
 
@@ -190,9 +223,9 @@ final class AppStore {
         }
         apps.remove(at: idx)
         save()
-        if let icon = app.iconFile {
-            try? fm.removeItem(at: iconsDir.appendingPathComponent(icon))
-        }
+        try? fm.removeItem(at: appDataDir(for: id))
+        try? fm.removeItem(at: backupDir.appendingPathComponent("apps", isDirectory: true).appendingPathComponent(safeStorageName(id), isDirectory: true))
+        if let icon = app.iconFile { try? fm.removeItem(at: iconsDir.appendingPathComponent(icon)) }
         // 包目录名与 UUID 无关了，交给打包器按站点名定位并注销
         RunnerPackager.removeApp(app)
     }
@@ -209,9 +242,10 @@ final class AppStore {
 
     func setIcon(id: String, png: Data) -> String? {
         guard let idx = apps.firstIndex(where: { $0.id == id }) else { return nil }
-        let filename = "\(id).png"
-        let target = iconsDir.appendingPathComponent(filename)
+        let filename = "icon.png"
+        let target = appDataDir(for: id).appendingPathComponent(filename)
         do {
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try png.write(to: target, options: .atomic)
         } catch { return nil }
         apps[idx].iconFile = filename
@@ -224,14 +258,23 @@ final class AppStore {
         if let icon = apps[idx].iconFile {
             try? fm.removeItem(at: iconsDir.appendingPathComponent(icon))
         }
+        try? fm.removeItem(at: appDataDir(for: id).appendingPathComponent("icon.png"))
         apps[idx].iconFile = nil
         save()
     }
 
     func iconURL(for app: WebApp) -> URL? {
         guard let name = app.iconFile else { return nil }
-        let url = iconsDir.appendingPathComponent(name)
-        return fm.fileExists(atPath: url.path) ? url : nil
+        let current = appDataDir(for: app.id).appendingPathComponent(name == "\(app.id).png" ? "icon.png" : name)
+        if fm.fileExists(atPath: current.path) { return current }
+        // 兼容旧版 icons/<id>.png，首次读取时迁移到站点目录。
+        let legacy = iconsDir.appendingPathComponent(name)
+        guard fm.fileExists(atPath: legacy.path) else { return nil }
+        do {
+            try fm.createDirectory(at: current.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.moveItem(at: legacy, to: current)
+            return current
+        } catch { return legacy }
     }
 
     // MARK: 收藏
@@ -240,10 +283,8 @@ final class AppStore {
     private var bookmarksBackupFile: URL { backupDir.appendingPathComponent("bookmarks-backup.json") }
 
     private func bookmarksFile(for id: String, backup: Bool) -> URL {
-        let name = UUID(uuidString: id)?.uuidString.lowercased()
-            ?? "id-" + id.utf8.map { String(format: "%02x", $0) }.joined()
-        let directory = (backup ? backupDir : rootDir).appendingPathComponent("bookmarks", isDirectory: true)
-        return directory.appendingPathComponent(name + ".json")
+        let base = backup ? backupDir.appendingPathComponent("apps", isDirectory: true) : rootDir.appendingPathComponent("apps", isDirectory: true)
+        return base.appendingPathComponent(safeStorageName(id), isDirectory: true).appendingPathComponent("bookmarks.json")
     }
 
     private func removeBookmarks(for id: String) throws {
@@ -311,11 +352,8 @@ final class AppStore {
     // MARK: 会话
 
     private func sessionFile(for id: String, backup: Bool) -> URL {
-        // UUID 是常见格式；旧数据中的其他 ID 编码为十六进制，避免成为路径。
-        let name = UUID(uuidString: id)?.uuidString.lowercased()
-            ?? "id-" + id.utf8.map { String(format: "%02x", $0) }.joined()
-        let directory = (backup ? backupDir : rootDir).appendingPathComponent("sessions", isDirectory: true)
-        return directory.appendingPathComponent(name + ".json")
+        let base = backup ? backupDir.appendingPathComponent("apps", isDirectory: true) : rootDir.appendingPathComponent("apps", isDirectory: true)
+        return base.appendingPathComponent(safeStorageName(id), isDirectory: true).appendingPathComponent("session.json")
     }
 
     private func readSession(at url: URL) -> TabSession? {

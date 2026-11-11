@@ -6,8 +6,11 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         WebHubAppearance.apply(WebHubAppearance.preference)
         SharedStorage.warmUp()
+        if !RunnerPackager.createsStandaloneApps {
+            RunnerPackager.removeLegacyRuntimeShims()
+        }
         // 把旧目录中的站点包迁移到用户的应用程序目录。
-        RunnerPackager.migrateLegacyBundles()
+        if RunnerPackager.createsStandaloneApps { RunnerPackager.migrateLegacyBundles() }
 
         // 单宿主：先起 IPC 端口，等各站点 shim 来「请我开窗」
         SiteWindowManager.shared.startIPCServer()
@@ -40,11 +43,11 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
         // 上一版的 shim，`WebHubHostPath` 也可能指向旧路径 —— 用户若直接从 Dock 点
         // 站点图标（不经过应用中心），就会用到过期的那份。这里逐个校正一遍。
         // ensureApp 有指纹幂等，没变化时几乎不花时间；串行 + 间隔是为了不卡住启动。
-        refreshSiteBundles(AppStore.shared.apps)
+        if RunnerPackager.createsStandaloneApps { refreshSiteBundles(AppStore.shared.apps) }
     }
 
     private func refreshSiteBundles(_ apps: [WebApp], index: Int = 0) {
-        guard index < apps.count else { return }
+        guard RunnerPackager.createsStandaloneApps, index < apps.count else { return }
         _ = RunnerPackager.ensureApp(for: apps[index], iconPNG: nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.refreshSiteBundles(apps, index: index + 1)

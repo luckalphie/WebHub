@@ -11,7 +11,7 @@ This is an independent project and is not affiliated with Apple, Google, or any 
 ## Features
 
 - **Application center** — a grid of site tiles. Choose a generated name icon or a website icon, either fetched automatically or from a custom image URL. Generated icons crop transparent padding and scale the artwork to fit.
-- **Real Dock icons** — every configured site becomes its own `.app` with a unique bundle identifier, so it appears in the Dock, in Launchpad, and in the app switcher like a native application.
+- **Real Dock icons** — each open site has its own Dock icon. The optional global “Create Standalone Apps” setting also creates launchable apps in `~/Applications/WebHub Apps`; it is off by default.
 - **Independent windows** — each site opens in its own window with tabs, live website favicons, a tab menu for opening the page in the default browser, back / forward / reload / home buttons, and a copyable, read-only address bar. Hovering a tab shows its full title and, for loaded background tabs, the remaining time before unloading.
 - **Bookmarks** — save pages from a tab’s context menu in a per-site bookmarks bar; drag to reorder and right-click to manage them. Available page icons are saved with the bookmarks.
 - **Languages** — English and Simplified Chinese, with system or menu selection.
@@ -35,13 +35,13 @@ WebHub.app  (the only process doing real work)
         ▲
         │ CFMessagePort: open / activate / close
         │
-site shim processes ("Slack.app", "GitHub.app", …)
-    — one per site, no windows, no WebKit, Dock placeholder only
+shared WebHub Helper process ("WebHubHelper.app")
+    — one helper bundle is reused by all sites
 ```
 
 The reason is the shared sign-in. `WKWebsiteDataStore` is scoped to the host bundle identifier: two processes with different bundle identifiers get two different data directories, and no configuration changes that. Any multi-process design can only *approximate* sharing by copying cookies around. Running every site in one process makes it exact.
 
-So each site's `.app` is a shim — the equivalent of Chrome's `app_mode_loader`. It sets `NSApplicationActivationPolicy.regular` to claim a Dock tile, sends the host a message asking it to open the window, and stays alive until the host terminates it. The host owns the window and tells the shim to exit when that window closes.
+When standalone apps are disabled, WebHub creates one shared `WebHubHelper.app` under `~/Library/Application Support/WebHub/runtime-shims/`. The site ID is passed as a launch argument, the helper asks the host to open that site, and the helper exits when the site window closes. WebHub no longer creates a temporary `.app` for every site.
 
 `Sources/WebHubIPC` holds the message contract and nothing else, so the shim never links the host's AppKit or WebKit code.
 
@@ -68,14 +68,15 @@ Packaged builds are ad hoc signed and **not notarized**. macOS may refuse to ope
 | Path | Contents |
 | --- | --- |
 | `~/Library/Application Support/WebHub/apps.json` | Site list: name, URL, icon source, and accent color |
-| `~/Library/Application Support/WebHub/bookmarks/<site-id>.json` | Bookmarks for each site |
-| `~/Library/Application Support/WebHub/sessions/<site-id>.json` | Open tabs for each site |
-| `~/Library/Application Support/WebHub/icons/` | Cached favicons |
+| `~/Library/Application Support/WebHub/apps/<site-id>/` | Icons, sessions, bookmarks, and runtime icons for that site |
 | `~/Applications/WebHub Apps/` | Generated per-site `.app` bundles |
+| `~/Library/Application Support/WebHub/runtime-shims/` | Internal Dock shims when standalone apps are disabled |
 | `~/Library/WebKit/cn.webhub.launcher/` | The shared WebKit data store — this is where your sign-in state lives |
 | Keychain item `cn.webhub.credentials` | Saved usernames and passwords, one per registrable domain |
 
-`apps.json`, each site session, and each site’s bookmarks are backed up into the WebKit data directory. Existing `sessions.json` and `bookmarks.json` data is migrated when each site is opened; the original files are retained.
+`apps.json` and each site directory are backed up into the WebKit data directory. Legacy scattered files are migrated on upgrade and then removed.
+
+Disabling standalone apps removes WebHub-generated app bundles from `~/Applications/WebHub Apps`. If any are running, WebHub asks before closing them and removing the bundles; site data is retained. On first launch after upgrading, the default-off setting applies the same cleanup.
 
 WebHub contains no telemetry and no analytics. Its only network activity is loading the sites you configure and fetching their favicons.
 

@@ -87,6 +87,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     var tabs: [TabItem] = []
     private var activeIndex = 0
+    /// 按最近展示顺序记录标签，关闭当前标签时优先回到上一个展示的标签。
+    private var tabActivationHistory: [TabItem] = []
     private var running = false
     private var isClamping = false
     private var changingFullScreen = false
@@ -536,6 +538,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         let tab = tabs[index]
         if let previous = previous, previous !== tab { scheduleTabUnload(previous) }
         activeIndex = index
+        tabActivationHistory.removeAll { $0 === tab }
+        tabActivationHistory.insert(tab, at: 0)
         tab.unloadWork?.cancel()
         tab.unloadWork = nil
         tab.unloadDeadline = nil
@@ -559,6 +563,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         guard tabs.indices.contains(index) else { return }
         let selected = activeTab
         let tab = tabs.remove(at: index)
+        tabActivationHistory.removeAll { $0 === tab }
         unloadTab(tab)
 
         // 最后一个标签关掉 = 关窗口；applicationShouldTerminateAfterLastWindowClosed
@@ -572,7 +577,20 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             return
         }
 
-        let newIndex = selected.flatMap { selected in tabs.firstIndex(where: { $0 === selected }) } ?? min(index, tabs.count - 1)
+        let newIndex: Int
+        if selected === tab {
+            // 当前标签关闭后，优先回到最近一次展示过且仍存在的标签。
+            if let previous = tabActivationHistory.first(where: { previous in
+                tabs.contains(where: { $0 === previous })
+            }), let previousIndex = tabs.firstIndex(where: { $0 === previous }) {
+                newIndex = previousIndex
+            } else {
+                newIndex = min(index, tabs.count - 1)
+            }
+        } else {
+            // 关闭非当前标签时保持当前展示内容不变。
+            newIndex = selected.flatMap { selected in tabs.firstIndex(where: { $0 === selected }) } ?? min(index, tabs.count - 1)
+        }
         activeIndex = newIndex
         selectTab(newIndex)
         persistSession()

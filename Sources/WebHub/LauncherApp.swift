@@ -140,7 +140,13 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             if app.effectiveIconMode == .website, let iconURL = store.iconURL(for: app) {
                 // 用 data URI 避免 file:// 权限问题
                 if let data = try? Data(contentsOf: iconURL) {
-                    item["icon"] = "data:image/png;base64," + data.base64EncodedString()
+                    // 与 Dock 图标一样裁掉透明留白，再按磁贴的 Retina 尺寸生成预览。
+                    let preview = NSImage(data: data)
+                        .flatMap { IconBuilder.squareGlyph(glyph: $0, box: 160) }
+                        .flatMap { $0.tiffRepresentation }
+                        .flatMap { NSBitmapImageRep(data: $0) }
+                        .flatMap { $0.representation(using: .png, properties: [:]) } ?? data
+                    item["icon"] = "data:image/png;base64," + preview.base64EncodedString()
                 }
             }
             items.append(item)

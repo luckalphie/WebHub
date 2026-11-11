@@ -424,13 +424,19 @@ enum RunnerPackager {
             guard let standalone = ensureApp(for: app, iconPNG: iconData) else { return }
             bundle = standalone
         } else {
-            // 实验方案：站点目录中的轻量 DockIdentity.app 只提供标题和图标，
-            // 运行器仍是同一个 Helper，网页窗口继续由 WebHub 宿主统一管理。
-            guard let identity = ensureApp(for: app, iconPNG: iconData, runtime: true) else { return }
-            bundle = identity
+            guard let helper = embeddedHelperURL else { return }
+            bundle = helper
         }
         let cfg = NSWorkspace.OpenConfiguration()
         cfg.activates = true
+        // 共用内嵌 Helper 不在 Info.plist 固定站点身份，必须通过参数传入。
+        if !createsStandaloneApps {
+            var arguments = [app.id]
+            if let iconPath = runtimeIconURL(for: app, iconPNG: iconData)?.path { arguments.append(iconPath) }
+            arguments.append(app.name)
+            cfg.createsNewApplicationInstance = true
+            cfg.arguments = arguments
+        }
         NSWorkspace.shared.openApplication(at: bundle, configuration: cfg) { _, error in
             if let error = error {
                 DispatchQueue.main.async {

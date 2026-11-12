@@ -139,10 +139,5 @@ rm -rf "$APP"
 mv "$APP_DIR" "$APP"
 touch "$APP"
 
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-if ! "$LSREGISTER" -f "$APP" 2>/dev/null; then
-    echo "    （LaunchServices 刷新不可用，图标可能要等系统自己更新）" >&2
-fi
-
 echo "==> 完成: $APP"
 du -sh "$APP"

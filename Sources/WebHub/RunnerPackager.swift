@@ -120,7 +120,6 @@ enum RunnerPackager {
         for url in bundles {
             guard appID(in: url) != nil else { continue }
             try FileManager.default.removeItem(at: url)
-            deregister(url.path)
         }
     }
 
@@ -180,7 +179,6 @@ enum RunnerPackager {
         sign.standardError = FileHandle.nullDevice
         sign.standardOutput = FileHandle.nullDevice
         try? sign.run(); sign.waitUntilExit()
-        register(bundleURL.path)
         return bundleURL
     }
 
@@ -197,7 +195,6 @@ enum RunnerPackager {
         let fm = FileManager.default
         let store = AppStore.shared
         let dirs = [store.legacyRunnerDir, store.runnerDir]
-        var moved = false
         for dir in dirs {
             guard let bundles = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
             for legacy in bundles where legacy.pathExtension == "app" {
@@ -208,15 +205,11 @@ enum RunnerPackager {
                       !fm.fileExists(atPath: target.path) else { continue }
                 do {
                     try fm.moveItem(at: legacy, to: target)
-                    deregister(legacy.path)
-                    register(target.path)
-                    moved = true
                 } catch {
                     NSLog("[WebHub] 迁移站点应用失败：%@", error.localizedDescription)
                 }
             }
         }
-        if moved { restartDock() }
     }
 
     /// 包内容指纹：站点信息 + 运行器二进制大小 + 图标标识。
@@ -268,14 +261,12 @@ enum RunnerPackager {
         // 一旦此时主 App 正在重新编译（内嵌的 WebHubRunner 被删/在建），
         // 新进程会拿到残缺二进制，启动后 0.4s 内在 WebKit 初始化里崩掉。
         if existed, isUpToDate(app, bundleURL) {
-            register(bundleURL.path)
             return bundleURL
         }
 
         // 站点改名后旧包要清掉，否则 Dock 里会多留一个旧名字的图标
         if let siblings = try? fm.contentsOfDirectory(at: runtime ? runtimeDir : store.runnerDir,
                                                       includingPropertiesForKeys: nil) {
-            var removed = false
             for url in siblings where url.pathExtension == "app"
                 && url.standardizedFileURL != bundleURL.standardizedFileURL {
                 let p = url.appendingPathComponent("Contents/Info.plist")
@@ -283,11 +274,8 @@ enum RunnerPackager {
                       let obj = try? PropertyListSerialization.propertyList(from: d, options: [], format: nil),
                       let dict = obj as? [String: Any],
                       dict["WebHubAppID"] as? String == app.id else { continue }
-                deregister(url.path)
                 try? fm.removeItem(at: url)
-                removed = true
             }
-            if removed && !runtime { restartDock() }
         }
         let macosDir = bundleURL.appendingPathComponent("Contents/MacOS")
         let resDir = bundleURL.appendingPathComponent("Contents/Resources")
@@ -378,44 +366,17 @@ enum RunnerPackager {
         try? sign.run()
         sign.waitUntilExit()
 
-        // 刷新 Launch Services 注册；新建的包再重启一次 Dock，
-        // 否则 Dock 缓存里会把包文件名（旧版是 UUID）当成标签显示出来
         // 指纹要在签名之后写：签名会动 _CodeSignature，但不影响指纹内容
         if let stamp = stampText(for: app, bundleURL: bundleURL) {
             try? stamp.write(to: stampURL(bundleURL), atomically: true, encoding: .utf8)
         }
-        register(bundleURL.path)
-        if !existed && !runtime { restartDock() }
-
         return bundleURL
     }
-
-    // MARK: - Launch Services
-
-    private static let lsregisterPath = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-
-    private static func run(_ path: String, _ args: [String]) {
-        guard FileManager.default.fileExists(atPath: path) else { return }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: path)
-        p.arguments = args
-        p.standardError = FileHandle.nullDevice
-        p.standardOutput = FileHandle.nullDevice
-        try? p.run()
-        p.waitUntilExit()
-    }
-
-    private static func register(_ path: String) { run(lsregisterPath, ["-f", path]) }
-    private static func deregister(_ path: String) { run(lsregisterPath, ["-u", path]) }
-
-    /// Dock 会缓存应用标签，改包名后必须让它重启才会重新读 Launch Services
-    private static func restartDock() { run("/usr/bin/killall", ["Dock"]) }
 
     static func removeApp(_ app: WebApp) {
         let dir = AppStore.shared.runnerDir
         for url in [dir.appendingPathComponent("\(app.id).app"), bundleURL(for: app), bundleURL(for: app, runtime: true)] {
             guard appID(in: url) == app.id else { continue }
-            deregister(url.path)
             try? FileManager.default.removeItem(at: url)
         }
     }

@@ -9,6 +9,38 @@ import Foundation
 
 enum IconBuilder {
 
+    /// 在系统文件夹图标中间绘制灰色的 WebHub 四格标识。
+    static func folderIcon(size: CGFloat = 512) -> NSImage? {
+        guard let rep = makeBitmap(size: size),
+              let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        let previous = NSGraphicsContext.current
+        NSGraphicsContext.current = context
+        defer {
+            context.flushGraphics()
+            NSGraphicsContext.current = previous
+        }
+
+        let fullRect = NSRect(x: 0, y: 0, width: size, height: size)
+        NSWorkspace.shared.icon(forFileType: "public.folder")
+            .draw(in: fullRect, from: .zero, operation: .sourceOver, fraction: 1)
+
+        let cell = size * 0.17
+        let gap = size * 0.044
+        let originX = (size - cell * 2 - gap) / 2
+        let originY = size * 0.27
+        NSColor(calibratedWhite: 0.25, alpha: 0.72).setFill()
+        for row in 0..<2 {
+            for column in 0..<2 {
+                let rect = NSRect(x: originX + CGFloat(column) * (cell + gap),
+                                  y: originY + CGFloat(row) * (cell + gap),
+                                  width: cell, height: cell)
+                NSBezierPath(roundedRect: rect, xRadius: cell * 0.25, yRadius: cell * 0.25).fill()
+            }
+        }
+        guard let data = rep.representation(using: .png, properties: [:]) else { return nil }
+        return NSImage(data: data)
+    }
+
     /// 站点图标 + 主题色圆角底
     static func composeIcon(glyph: NSImage?, accent: String, size: CGFloat = 1024) -> Data? {
         guard let rep = makeBitmap(size: size) else { return nil }

@@ -23,6 +23,7 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
         let wc = LauncherWindowController()
         controller = wc
         wc.show()
+        RunnerPackager.refreshRunnerDirectoryIcon()
 
         // 站点窗口全关后把菜单还原，否则 Cmd+Q / 「退出 WebHub」会落在
         // 一个已经关了窗口的站点菜单上，毫无反应

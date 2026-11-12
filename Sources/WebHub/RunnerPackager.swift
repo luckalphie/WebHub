@@ -12,6 +12,15 @@ enum RunnerPackager {
     }
     static var hasStandalonePreference: Bool { UserDefaults.standard.object(forKey: standaloneKey) != nil }
     static var isChangingStandaloneApps = false
+
+    /// 给 ~/Applications/WebHub Apps 设置 Edge Apps 风格的文件夹图标。
+    /// 文件夹不存在时静默跳过。
+    static func refreshRunnerDirectoryIcon() {
+        let directory = AppStore.shared.runnerDir
+        guard FileManager.default.fileExists(atPath: directory.path),
+              let folderIcon = IconBuilder.folderIcon() else { return }
+        NSWorkspace.shared.setIcon(folderIcon, forFile: directory.path, options: [])
+    }
     private static var runtimeDir: URL { AppStore.shared.rootDir.appendingPathComponent("runtime-shims", isDirectory: true) }
     private static var runtimeHelperURL: URL { runtimeDir.appendingPathComponent("WebHubHelper.app", isDirectory: true) }
 

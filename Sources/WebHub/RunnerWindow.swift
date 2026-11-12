@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import ObjectiveC
 
 // MARK: - 单站点的标签页
 
@@ -476,8 +477,39 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     @objc private func duplicateTabFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID,
               let tab = tabs.first(where: { $0.id == id }) else { return }
-        addTab(url: tab.webView?.url ?? tab.url, activate: true)
+        duplicateTab(tab)
         persistSession()
+    }
+
+    private func duplicateTab(_ source: TabItem) {
+        // 切换标签会移除原 WebView，必须先读取检查器的显示状态。
+        let inspectorWasVisible = source.webView.map { inspectorIsVisible(for: $0) } ?? false
+        let tab = addTab(url: source.webView?.url ?? source.url, activate: true, title: source.title)
+        guard inspectorWasVisible, let webView = tab.webView else { return }
+        // 等新 WebView 加入窗口后打开检查器，才能正确停靠到窗口。
+        DispatchQueue.main.async { [weak self, weak tab, weak webView] in
+            guard let self, let tab, let webView, tab.webView === webView,
+                  self.activeTab === tab, let inspector = self.inspector(for: webView) else { return }
+            let selector = NSSelectorFromString("show")
+            guard inspector.responds(to: selector) else { return }
+            inspector.perform(selector)
+        }
+    }
+
+    // WebKit 尚未公开控制本地检查器窗口的 API；运行时检查以兼容系统版本变化。
+    private func inspector(for webView: WKWebView) -> NSObject? {
+        let selector = NSSelectorFromString("_inspector")
+        guard webView.responds(to: selector) else { return nil }
+        return webView.perform(selector)?.takeUnretainedValue() as? NSObject
+    }
+
+    private func inspectorIsVisible(for webView: WKWebView) -> Bool {
+        guard let inspector = inspector(for: webView) else { return false }
+        let selector = NSSelectorFromString("isVisible")
+        guard inspector.responds(to: selector), let method = class_getInstanceMethod(type(of: inspector), selector) else { return false }
+        let implementation = method_getImplementation(method)
+        let invoke = unsafeBitCast(implementation, to: (@convention(c) (AnyObject, Selector) -> Bool).self)
+        return invoke(inspector, selector)
     }
 
     @objc private func closeTabFromMenu(_ sender: NSMenuItem) {
@@ -771,8 +803,11 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     @objc private func newTab() {
-        let url = activeTab.map { $0.webView?.url ?? $0.url } ?? homeURL
-        addTab(url: url, activate: true)
+        if let source = activeTab {
+            duplicateTab(source)
+        } else {
+            addTab(url: homeURL, activate: true)
+        }
         persistSession()
     }
 

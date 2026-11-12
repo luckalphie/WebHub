@@ -4,6 +4,9 @@ import Foundation
 /// 从站点抓取 favicon / apple-touch-icon
 enum IconFetcher {
 
+    // 仅合并正在进行的标签图标请求，不缓存结果，以便后续导航获取更新的图标。
+    private static var tabIconRequests: [String: [(Data?) -> Void]] = [:]
+
     private static let session: URLSession = {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 12
@@ -36,6 +39,27 @@ enum IconFetcher {
         }
         downloadFirst(candidates: [url], index: 0) { data in
             DispatchQueue.main.async { completion(data) }
+        }
+    }
+
+    /// 标签和书签只需要小图；相同地址的并发请求共用一次下载与转换。
+    static func fetchTabIcon(from iconURL: String, completion: @escaping (Data?) -> Void) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        if tabIconRequests[iconURL] != nil {
+            tabIconRequests[iconURL]?.append(completion)
+            return
+        }
+        guard let url = URL(string: iconURL),
+              let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else {
+            completion(nil)
+            return
+        }
+        tabIconRequests[iconURL] = [completion]
+        downloadFirst(candidates: [url], index: 0, targetSize: 64) { data in
+            DispatchQueue.main.async {
+                let callbacks = tabIconRequests.removeValue(forKey: iconURL) ?? []
+                callbacks.forEach { $0(data) }
+            }
         }
     }
 
@@ -157,7 +181,7 @@ enum IconFetcher {
         return hosts
     }
 
-    private static func downloadFirst(candidates: [URL], index: Int, completion: @escaping (Data?) -> Void) {
+    private static func downloadFirst(candidates: [URL], index: Int, targetSize: CGFloat? = nil, completion: @escaping (Data?) -> Void) {
         guard index < candidates.count else { completion(nil); return }
         let url = candidates[index]
         var request = URLRequest(url: url)
@@ -166,17 +190,17 @@ enum IconFetcher {
         session.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard error == nil, let data = data, data.count > 64, status == 200 else {
-                downloadFirst(candidates: candidates, index: index + 1, completion: completion)
+                downloadFirst(candidates: candidates, index: index + 1, targetSize: targetSize, completion: completion)
                 return
             }
             // 校验内容类型，跳过 HTML 错误页
             let ctype = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
             if ctype.contains("text/html") {
-                downloadFirst(candidates: candidates, index: index + 1, completion: completion)
+                downloadFirst(candidates: candidates, index: index + 1, targetSize: targetSize, completion: completion)
                 return
             }
-            guard let png = normalizeToPNG(data) else {
-                downloadFirst(candidates: candidates, index: index + 1, completion: completion)
+            guard let png = normalizeToPNG(data, targetSize: targetSize) else {
+                downloadFirst(candidates: candidates, index: index + 1, targetSize: targetSize, completion: completion)
                 return
             }
             completion(png)
@@ -184,18 +208,18 @@ enum IconFetcher {
     }
 
     /// 任意图片数据 → PNG（处理 ICO / SVG / 各种位图）
-    static func normalizeToPNG(_ data: Data) -> Data? {
+    static func normalizeToPNG(_ data: Data, targetSize: CGFloat? = nil) -> Data? {
         // SVG 直接位图化
         if let text = String(data: data, encoding: .utf8), text.contains("<svg") {
             if let image = NSImage(data: data) {
-                return pngData(from: image, size: 512)
+                return pngData(from: image, size: targetSize ?? 512)
             }
             return nil
         }
         guard let image = NSImage(data: data) else { return nil }
         // 太小（如 16x16）直接放大没有意义，但仍可使用
         let maxSide = max(image.size.width, image.size.height)
-        let target: CGFloat = maxSide < 256 ? 512 : 1024
+        let target: CGFloat = targetSize ?? (maxSide < 256 ? 512 : 1024)
         return pngData(from: image, size: target)
     }
 

@@ -11,6 +11,8 @@ final class TabItem {
     var url: URL
     var favicon: NSImage?
     var faviconURL: String?
+    var faviconRequestID = UUID()
+    weak var faviconButton: NSButton?
     var titleObservation: NSKeyValueObservation?
     var urlObservation: NSKeyValueObservation?
     var unloadWork: DispatchWorkItem?
@@ -658,7 +660,8 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
             faviconButton.tag = i
             faviconButton.menu = tabContextMenu(for: tab.id)
             faviconButton.isBordered = false
-            faviconButton.image = tab.favicon ?? NSImage(systemSymbolName: "globe", accessibilityDescription: WebHubLanguage.text("Website"))
+            tab.faviconButton = faviconButton
+            updateFaviconButton(for: tab)
             faviconButton.imagePosition = .imageOnly
             faviconButton.imageScaling = .scaleProportionallyDown
             faviconButton.translatesAutoresizingMaskIntoConstraints = false
@@ -740,35 +743,64 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
 
     private static let faviconObserverScript = """
     (() => {
+      let lastURL = null;
+      let scheduled = false;
       const send = () => {
+        scheduled = false;
         const links = Array.from(document.querySelectorAll('link[rel]'))
           .filter(link => /(^|\\s)(icon|shortcut icon|apple-touch-icon)(\\s|$)/i.test(link.rel) && link.href);
         const link = links.find(item => /apple-touch-icon/i.test(item.rel)) || links[0];
-        if (link && window.webkit?.messageHandlers?.tab) {
-          window.webkit.messageHandlers.tab.postMessage({type: 'favicon', url: link.href});
+        const url = link?.href || '';
+        if (url !== lastURL && window.webkit?.messageHandlers?.tab) {
+          lastURL = url;
+          window.webkit.messageHandlers.tab.postMessage({type: 'favicon', url});
         }
       };
       window.__webhubRefreshFavicon = send;
       send();
-      new MutationObserver(send).observe(document.documentElement, {
+      const hasLink = node => node.nodeType === Node.ELEMENT_NODE &&
+        (node.matches('link[rel]') || node.querySelector('link[rel]'));
+      new MutationObserver(records => {
+        const changed = records.some(record => record.type === 'attributes'
+          ? record.target.matches('link')
+          : [...record.addedNodes, ...record.removedNodes].some(hasLink));
+        if (changed && !scheduled) {
+          scheduled = true;
+          setTimeout(send, 0);
+        }
+      }).observe(document.documentElement, {
         subtree: true, childList: true, attributes: true, attributeFilter: ['rel', 'href']
       });
     })();
     """
 
+    private func updateFaviconButton(for tab: TabItem) {
+        tab.faviconButton?.image = tab.favicon ?? NSImage(systemSymbolName: "globe", accessibilityDescription: WebHubLanguage.text("Website"))
+    }
+
     private func updateFavicon(for webView: WKWebView, url: String) {
-        guard let tab = tabs.first(where: { $0.webView === webView }),
+        guard let tab = tabs.first(where: { $0.webView === webView }) else { return }
+        if url.isEmpty {
+            tab.faviconRequestID = UUID()
+            tab.faviconURL = nil
+            tab.favicon = nil
+            updateFaviconButton(for: tab)
+            return
+        }
+        guard tab.faviconURL != url,
               let iconURL = URL(string: url),
               ["http", "https"].contains(iconURL.scheme?.lowercased() ?? "") else { return }
         let requestedURL = iconURL.absoluteString
         let pageURL = webView.url?.absoluteString
         tab.faviconURL = requestedURL
-        IconFetcher.fetchIcon(from: requestedURL) { [weak self, weak tab, weak webView] png in
+        let requestID = UUID()
+        tab.faviconRequestID = requestID
+        IconFetcher.fetchTabIcon(from: requestedURL) { [weak self, weak tab, weak webView] png in
             guard let self = self, let tab = tab, let webView = webView,
                   self.tabs.contains(where: { $0 === tab }), tab.webView === webView,
-                  tab.faviconURL == requestedURL else { return }
+                  tab.faviconRequestID == requestID else { return }
             tab.favicon = png.flatMap(NSImage.init(data:))
-            self.rebuildTabBar()
+            self.updateFaviconButton(for: tab)
             if let png = png, let pageURL = pageURL, webView.url?.absoluteString == pageURL {
                 self.updateBookmarkIcon(png, for: pageURL)
             }
@@ -1024,6 +1056,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         if let tab = tabs.first(where: { $0.webView === webView }) {
             tab.favicon = nil
             tab.faviconURL = nil
+            tab.faviconRequestID = UUID()
             rebuildTabBar()
         }
         updateToolbarState()

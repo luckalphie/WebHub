@@ -17,7 +17,7 @@ final class SiteWindowManager {
     /// shim 与本进程之间的通道名
     static let portName = WebHubIPC.portName
 
-    private var controllers: [String: RunnerWindowController] = [:]
+    private var controllers: [String: SiteWindowController] = [:]
     /// 站点 id → 该站点 shim 的 pid（窗口全关时用它收掉 Dock 图标）
     private var shims: [String: RunnerProcess] = [:]
     private var localPort: CFMessagePort?
@@ -42,7 +42,7 @@ final class SiteWindowManager {
         }
         guard let url = URL(string: app.url) else { return }
 
-        let wc = RunnerWindowController(app: app, url: url)
+        let wc = SiteWindowController(app: app, url: url)
         wc.onWindowClosed = { [weak self] in
             self?.siteWindowDidClose(app.id)
         }

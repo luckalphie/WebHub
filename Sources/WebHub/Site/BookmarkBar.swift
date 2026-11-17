@@ -102,8 +102,8 @@ final class BookmarkScrollView: NSScrollView {
     override func concludeDragOperation(_ sender: NSDraggingInfo?) { insertionMarker.isHidden = true }
 }
 
-// 收藏栏及其操作；窗口布局由 RunnerWindowController 管理。
-extension RunnerWindowController {
+// 收藏栏及其操作；窗口布局由 SiteWindowController 管理。
+extension SiteWindowController {
     private func saveBookmarks(_ items: [Bookmark]) {
         do {
             let backupSaved = try AppStore.shared.saveBookmarks(items, for: appID)

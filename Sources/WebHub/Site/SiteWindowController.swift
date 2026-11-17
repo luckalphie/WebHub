@@ -26,10 +26,10 @@ final class TabItem {
 }
 
 private final class TabToolTipOwner: NSObject, NSViewToolTipOwner {
-    weak var controller: RunnerWindowController?
+    weak var controller: SiteWindowController?
     weak var tab: TabItem?
 
-    init(controller: RunnerWindowController, tab: TabItem) {
+    init(controller: SiteWindowController, tab: TabItem) {
         self.controller = controller
         self.tab = tab
     }
@@ -59,9 +59,9 @@ private final class TitlebarBackgroundView: AppearanceBackgroundView {
     }
 }
 
-// MARK: - 运行器窗口
+// MARK: - 站点窗口
 
-final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     private static let maxTabWidth: CGFloat = 150
 
     let appID: String
@@ -93,7 +93,6 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     /// 按最近展示顺序记录标签，关闭当前标签时优先回到上一个展示的标签。
     private var tabActivationHistory: [TabItem] = []
     private var running = false
-    private var isClamping = false
     private var changingFullScreen = false
     /// 后台标签闲置 5 分钟后卸载，切回时重新加载。
     private let backgroundTabTimeout: TimeInterval = 5 * 60
@@ -210,13 +209,10 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.minSize = NSSize(width: min(760, width), height: min(480, height))
-        window.maxSize = NSSize(width: visible.width, height: visible.height)
-        window.center()
-        if let frame = savedFrame {
-            let x = min(max(frame.minX, visible.minX), visible.maxX - width)
-            let y = min(max(frame.minY, visible.minY), visible.maxY - height)
-            window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
-        }
+        // 仅在创建时约束到目标屏幕；后续交由系统处理拖动和缩放。
+        let x = min(max(savedFrame?.minX ?? visible.midX - width / 2, visible.minX), visible.maxX - width)
+        let y = min(max(savedFrame?.minY ?? visible.midY - height / 2, visible.minY), visible.maxY - height)
+        window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
         window.delegate = self
 
         let root = AppearanceBackgroundView(backgroundColor: .windowBackgroundColor)
@@ -1183,7 +1179,7 @@ final class RunnerWindowController: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 }
 
-extension RunnerWindowController: NSWindowDelegate {
+extension SiteWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         persistWindowFrame()
         persistSession()
@@ -1201,23 +1197,14 @@ extension RunnerWindowController: NSWindowDelegate {
         }
     }
 
-    /// 无论标签栏约束还是网页想撑大窗口，都限制在当前屏幕内
-    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        let v = sender.screen?.visibleFrame ?? visibleScreenFrame()
-        return NSSize(width: min(frameSize.width, v.width),
-                      height: min(frameSize.height, v.height))
-    }
-
     func windowDidResize(_ notification: Notification) {
         updateTabStackWidth()
-        guard !isClamping, !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
-        clampFrameToScreen()
+        guard !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
         persistWindowFrame()
     }
 
     func windowDidMove(_ notification: Notification) {
-        guard !isClamping, !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
-        clampFrameToScreen()
+        guard !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
         persistWindowFrame()
     }
 
@@ -1236,23 +1223,6 @@ extension RunnerWindowController: NSWindowDelegate {
         persistWindowFrame()
     }
 
-    private func clampFrameToScreen() {
-        guard let w = window, !isClamping else { return }
-        let v = w.screen?.visibleFrame ?? visibleScreenFrame()
-        let f = w.frame
-        let width = min(f.size.width, v.width)
-        let height = min(f.size.height, v.height)
-        // 保证整个窗口都落在可见区域内（右/下边缘不越界）
-        let maxX = max(v.minX, v.maxX - width)
-        let maxY = max(v.minY, v.maxY - height)
-        let x = min(max(f.origin.x, v.minX), maxX)
-        let y = min(max(f.origin.y, v.minY), maxY)
-        guard abs(x - f.origin.x) > 1 || abs(y - f.origin.y) > 1 ||
-              abs(width - f.size.width) > 1 || abs(height - f.size.height) > 1 else { return }
-        isClamping = true
-        w.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
-        isClamping = false
-    }
 }
 
 /// 地址栏用的只读文本框：可选中复制，并兼容 Windows 习惯的 Ctrl+C / Ctrl+A。

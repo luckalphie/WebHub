@@ -19,7 +19,7 @@ final class SiteWindowManager {
 
     private var controllers: [String: RunnerWindowController] = [:]
     /// 站点 id → 该站点 shim 的 pid（窗口全关时用它收掉 Dock 图标）
-    private var shimPIDs: [String: pid_t] = [:]
+    private var shims: [String: RunnerProcess] = [:]
     private var localPort: CFMessagePort?
 
     private init() {}
@@ -34,7 +34,7 @@ final class SiteWindowManager {
 
     /// 打开（或激活）某个站点的窗口
     func open(_ app: WebApp, shimPID: pid_t? = nil) {
-        if let pid = shimPID, pid > 1 { shimPIDs[app.id] = pid }
+        if let pid = shimPID, let shim = RunnerProcess(pid: pid, appID: app.id) { shims[app.id] = shim }
 
         if let existing = controllers[app.id] {
             existing.focus()
@@ -62,18 +62,15 @@ final class SiteWindowManager {
     /// 站点窗口关闭 → 收掉它的 shim（Dock 图标随之消失）
     private func siteWindowDidClose(_ appID: String) {
         controllers.removeValue(forKey: appID)
-        if let pid = shimPIDs.removeValue(forKey: appID), pid > 1 {
-            kill(pid, SIGTERM)
-        }
+        shims.removeValue(forKey: appID)?.requestTermination()
         if controllers.isEmpty { onAllSitesClosed?() }
     }
 
     /// WebHub 退出时把所有 shim 一起收掉，别在 Dock 里留孤儿图标
     func terminateAllShims() {
-        for (_, pid) in shimPIDs where pid > 1 {
-            kill(pid, SIGTERM)
-        }
-        shimPIDs.removeAll()
+        let processes = Array(shims.values)
+        shims.removeAll()
+        for process in processes { process.requestTermination() }
     }
 
     // MARK: - IPC 服务端
@@ -113,13 +110,13 @@ final class SiteWindowManager {
               let appID = obj["appID"] as? String, !appID.isEmpty
         else { return }
 
-        let pid = (obj["pid"] as? Int).map { pid_t($0) } ?? 0
+        let pid = (obj["pid"] as? Int).flatMap { pid_t(exactly: $0) } ?? 0
 
         switch cmd {
         case "open":
             guard let app = AppStore.shared.apps.first(where: { $0.id == appID }) else {
                 // 站点已被删除：让 shim 自己退掉，别留个死图标
-                if pid > 1 { kill(pid, SIGTERM) }
+                RunnerProcess(pid: pid, appID: appID)?.requestTermination()
                 return
             }
             open(app, shimPID: pid)
@@ -133,7 +130,7 @@ final class SiteWindowManager {
             // shim 自己在退出（Dock 右键「退出」）：把窗口一并关掉，
             // 但不要再去 kill 它 —— 它已经在退出的路上了。
             guard let wc = controllers[appID] else { return }
-            shimPIDs.removeValue(forKey: appID)
+            shims.removeValue(forKey: appID)
             wc.hostWindow?.performClose(nil)
         default:
             break

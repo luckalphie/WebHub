@@ -71,34 +71,8 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// 退出启动器时把站点进程一起收掉，避免 Dock 里留一堆孤儿图标。
-    ///
-    /// ⚠️ 不能用 `NSRunningApplication.terminate()`：那是发 Apple Event，
-    /// 会被「隐私与安全性 → 自动化」权限拦截并静默失败（实测启动器原地不动）。
-    /// 改用 SIGTERM，站点进程里有对应处理，会先存会话再退出。
+    /// 退出时只清理已登记且身份仍匹配的站点辅助进程。
     func applicationWillTerminate(_ notification: Notification) {
-        // 先按登记过的 pid 收一遍 shim
         SiteWindowManager.shared.terminateAllShims()
-
-        let runners = NSWorkspace.shared.runningApplications.filter {
-            ($0.bundleIdentifier ?? "").hasPrefix("cn.webhub.runner.")
-        }
-        guard !runners.isEmpty else { return }
-
-        for runner in runners { kill(runner.processIdentifier, SIGTERM) }
-
-        // 给它们最多 1.5 秒优雅退出（保存标签会话），超时就强杀
-        let deadline = Date().addingTimeInterval(1.5)
-        while Date() < deadline && runners.contains(where: { isAlive($0) }) {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-        }
-        for runner in runners where isAlive(runner) {
-            kill(runner.processIdentifier, SIGKILL)
-        }
-    }
-
-    /// 信号 0 不发送任何东西，只探测进程是否还在
-    private func isAlive(_ app: NSRunningApplication) -> Bool {
-        kill(app.processIdentifier, 0) == 0
     }
 }

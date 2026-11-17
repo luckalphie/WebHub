@@ -513,10 +513,11 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         RunnerPackager.isChangingStandaloneApps = true
         updateStandaloneControl()
         for process in running {
+            let runner = process.bundleURL.flatMap { RunnerPackager.appID(in: $0) }.flatMap { RunnerProcess(application: process, appID: $0) }
             if let url = process.bundleURL, let id = RunnerPackager.appID(in: url), SiteWindowManager.shared.openSiteIDs.contains(id) {
                 SiteWindowManager.shared.close(id)
             }
-            if !process.isTerminated { kill(process.processIdentifier, SIGTERM) }
+            runner?.requestTermination()
         }
         finishDisablingStandaloneApps(bundles, running: running, deadline: Date().addingTimeInterval(5))
     }

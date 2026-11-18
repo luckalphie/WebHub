@@ -2,20 +2,64 @@ import AppKit
 import WebKit
 
 private let bookmarkPasteboardType = NSPasteboard.PasteboardType("cn.webhub.bookmark")
+private let bookmarkBarContentHeight: CGFloat = 38
+
+private final class BookmarkButtonCell: NSButtonCell {
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        super.drawInterior(withFrame: cellFrame.insetBy(dx: 8, dy: 0), in: controlView)
+    }
+}
 
 // 用系统拖放会话显示书签快照；普通点击仍交给 NSButton 处理。
 private final class BookmarkButton: NSButton, NSDraggingSource {
+    override class var cellClass: AnyClass? {
+        get { BookmarkButtonCell.self }
+        set { }
+    }
+
     let bookmarkID: UUID
+    private var hoverTrackingArea: NSTrackingArea?
+    private var hovered = false
 
     init(bookmarkID: UUID) {
         self.bookmarkID = bookmarkID
         super.init(frame: .zero)
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 7
         let pan = NSPanGestureRecognizer(target: self, action: #selector(beginBookmarkDrag(_:)))
         pan.delaysPrimaryMouseButtonEvents = true
         addGestureRecognizer(pan)
     }
 
     required init?(coder: NSCoder) { return nil }
+
+    override var intrinsicContentSize: NSSize {
+        var size = super.intrinsicContentSize
+        size.width += 16
+        return size
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = hoverTrackingArea { removeTrackingArea(area) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true; updateHoverBackground() }
+    override func mouseExited(with event: NSEvent) { hovered = false; updateHoverBackground() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateHoverBackground()
+    }
+
+    private func updateHoverBackground() {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        layer?.backgroundColor = (hovered ? NSColor(white: dark ? 0.3 : 0.91, alpha: 1) : .clear).cgColor
+    }
 
     @objc private func beginBookmarkDrag(_ gesture: NSPanGestureRecognizer) {
         guard gesture.state == .began, let event = NSApp.currentEvent,
@@ -146,7 +190,7 @@ extension SiteWindowController {
         guard let stack = bookmarkStack else { return }
         let bookmarks = AppStore.shared.bookmarks(for: appID)
         bookmarkBar.isHidden = bookmarks.isEmpty
-        bookmarkBarHeight.constant = bookmarks.isEmpty ? 0 : 32
+        bookmarkBarHeight.constant = bookmarks.isEmpty ? 0 : bookmarkBarContentHeight
         let ids = Set(bookmarks.map { $0.id.uuidString })
         for view in stack.arrangedSubviews where !ids.contains(view.identifier?.rawValue ?? "") {
             stack.removeArrangedSubview(view)
@@ -163,9 +207,9 @@ extension SiteWindowController {
                 button.title = bookmark.title
                 button.target = self
                 button.action = #selector(openBookmark(_:))
-                button.bezelStyle = .inline
                 button.imagePosition = .imageLeading
                 button.imageScaling = .scaleProportionallyDown
+                button.heightAnchor.constraint(equalToConstant: bookmarkBarContentHeight - 6).isActive = true
                 button.setContentCompressionResistancePriority(.required, for: .horizontal)
                 button.identifier = identifier
                 button.toolTip = bookmark.url
@@ -199,7 +243,7 @@ extension SiteWindowController {
         let buttons = stack.arrangedSubviews.filter { !$0.isHidden }
         let width = buttons.reduce(CGFloat.zero) { $0 + $1.fittingSize.width }
             + CGFloat(max(0, buttons.count - 1)) * stack.spacing
-        stack.setFrameSize(NSSize(width: max(ceil(width), 1), height: 30))
+        stack.setFrameSize(NSSize(width: max(ceil(width), 1), height: bookmarkBarContentHeight))
         stack.layoutSubtreeIfNeeded()
     }
 

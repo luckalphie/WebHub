@@ -43,6 +43,28 @@ private final class TabToolTipOwner: NSObject, NSViewToolTipOwner {
 
 // 全尺寸内容覆盖标题栏时，空白区域由自定义视图接收鼠标事件。
 private final class TitlebarBackgroundView: AppearanceBackgroundView {
+    weak var selectedTab: NSView?
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let selectedTab, selectedTab.superview != nil else { return }
+        let frame = convert(selectedTab.bounds, from: selectedTab)
+        let radius: CGFloat = 10
+        SiteChromeColors.selectedTab.setFill()
+        let left = NSBezierPath()
+        left.move(to: NSPoint(x: frame.minX - radius, y: frame.minY))
+        left.curve(to: NSPoint(x: frame.minX, y: frame.minY + radius), controlPoint1: NSPoint(x: frame.minX - radius * 0.45, y: frame.minY), controlPoint2: NSPoint(x: frame.minX, y: frame.minY + radius * 0.45))
+        left.line(to: NSPoint(x: frame.minX, y: frame.minY))
+        left.close()
+        left.fill()
+        let right = NSBezierPath()
+        right.move(to: NSPoint(x: frame.maxX, y: frame.minY + radius))
+        right.curve(to: NSPoint(x: frame.maxX + radius, y: frame.minY), controlPoint1: NSPoint(x: frame.maxX, y: frame.minY + radius * 0.45), controlPoint2: NSPoint(x: frame.maxX + radius * 0.45, y: frame.minY))
+        right.line(to: NSPoint(x: frame.maxX, y: frame.minY))
+        right.close()
+        right.fill()
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard let window = window else { return }
         if event.clickCount == 2 {
@@ -219,17 +241,17 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
         window.delegate = self
 
-        let root = AppearanceBackgroundView(backgroundColor: .windowBackgroundColor)
+        let root = AppearanceBackgroundView(backgroundColor: SiteChromeColors.toolbar)
         window.contentView = root
 
         // 工具栏（标签栏下面一行）
-        let topBar = AppearanceBackgroundView(backgroundColor: .controlBackgroundColor)
+        let topBar = AppearanceBackgroundView(backgroundColor: SiteChromeColors.toolbar)
         topBar.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(topBar)
         self.topBar = topBar
 
         // 标签栏（最顶）
-        tabBar = TitlebarBackgroundView(backgroundColor: .controlBackgroundColor)
+        tabBar = TitlebarBackgroundView(backgroundColor: SiteChromeColors.titleBar)
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(tabBar)
 
@@ -306,18 +328,18 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             tabBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             tabBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             tabBar.topAnchor.constraint(equalTo: root.topAnchor),
-            tabBar.heightAnchor.constraint(equalToConstant: 38),
+            tabBar.heightAnchor.constraint(equalToConstant: 44),
 
             // 工具栏（后退/前进/主页/刷新 + 地址栏）在标签栏下面
             topBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             topBar.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 48),
+            topBar.heightAnchor.constraint(equalToConstant: 42),
 
             tabStack.leadingAnchor.constraint(equalTo: tabBar.leadingAnchor, constant: 84),
             tabStack.widthAnchor.constraint(lessThanOrEqualTo: tabBar.widthAnchor, constant: -94),
             tabStack.trailingAnchor.constraint(lessThanOrEqualTo: tabBar.trailingAnchor, constant: -10),
-            tabStack.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor, constant: 2),
+            tabStack.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor),
 
             bookmarkBar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             bookmarkBar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
@@ -347,7 +369,8 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         addressField.isBezeled = true
         addressField.bezelStyle = .roundedBezel
         addressField.font = NSFont.systemFont(ofSize: 12.5)
-        addressField.textColor = .secondaryLabelColor
+        addressField.textColor = SiteChromeColors.addressText
+        addressField.backgroundColor = SiteChromeColors.address
         addressField.isEditable = false
         addressField.isSelectable = true
         addressField.focusRingType = .none
@@ -375,7 +398,8 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             newTabButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             addressField.leadingAnchor.constraint(equalTo: prev.trailingAnchor, constant: 12),
             addressField.trailingAnchor.constraint(equalTo: newTabButton.leadingAnchor, constant: -10),
-            addressField.centerYAnchor.constraint(equalTo: topBar.centerYAnchor)
+            addressField.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            addressField.heightAnchor.constraint(equalToConstant: 32)
         ]
         NSLayoutConstraint.activate(constraints)
 
@@ -603,6 +627,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         guard tabs.indices.contains(index) else { return }
         let previous = activeTab
         let tab = tabs[index]
+        if previous !== tab, !findBar.isHidden { clearFindSelection(in: previous?.webView) }
         if let previous = previous, previous !== tab { scheduleTabUnload(previous) }
         activeIndex = index
         tabActivationHistory.removeAll { $0 === tab }
@@ -678,8 +703,9 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
 
         for (i, tab) in tabs.enumerated() {
             let holder = AppearanceBackgroundView(backgroundColor: i == activeIndex
-                ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.22) : .clear)
+                ? SiteChromeColors.selectedTab : .clear)
             holder.layer?.cornerRadius = 7
+            holder.layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             holder.translatesAutoresizingMaskIntoConstraints = false
             holder.menu = tabContextMenu(for: tab.id)
 
@@ -728,7 +754,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             holder.removeAllToolTips()
             let tooltipOwner = TabToolTipOwner(controller: self, tab: tab)
             tab.tooltipOwner = tooltipOwner
-            holder.addToolTip(NSRect(x: 0, y: 0, width: Self.maxTabWidth, height: 26), owner: tooltipOwner, userData: nil)
+            holder.addToolTip(NSRect(x: 0, y: 0, width: Self.maxTabWidth, height: 38), owner: tooltipOwner, userData: nil)
 
             let preferredTabWidth = holder.widthAnchor.constraint(equalToConstant: Self.maxTabWidth)
             // 空间充足时先扩展标签，窗口变窄或标签过多时再压缩。
@@ -736,7 +762,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             NSLayoutConstraint.activate([
                 preferredTabWidth,
                 holder.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxTabWidth),
-                holder.heightAnchor.constraint(equalToConstant: 26),
+                holder.heightAnchor.constraint(equalToConstant: 38),
                 selectionButton.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
                 selectionButton.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
                 selectionButton.topAnchor.constraint(equalTo: holder.topAnchor),
@@ -754,9 +780,11 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             ])
 
             tabStack.addArrangedSubview(holder)
+            if i == activeIndex { (tabBar as? TitlebarBackgroundView)?.selectedTab = holder }
             // 每个标签平分可用宽度，避免 NSStackView 将内容绘制到自身边界之外。
             holder.widthAnchor.constraint(equalTo: tabStack.widthAnchor, multiplier: 1 / CGFloat(tabs.count), constant: -tabStack.spacing * CGFloat(tabs.count - 1) / CGFloat(tabs.count)).isActive = true
         }
+        tabBar.needsDisplay = true
         updateTabStackWidth()
     }
 
@@ -765,6 +793,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         let available = max(0, tabBar.bounds.width - 94)
         let preferred = CGFloat(tabs.count) * Self.maxTabWidth + CGFloat(max(tabs.count - 1, 0)) * tabStack.spacing
         tabStackWidth.constant = min(available, preferred)
+        tabBar.needsDisplay = true
     }
 
     fileprivate func tooltipText(for tab: TabItem) -> String {
@@ -1006,6 +1035,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
 
     @objc private func closeFindBar() {
         findRequestID = UUID()
+        clearFindSelection(in: activeTab?.webView)
         findBar.isHidden = true
         findStatus.stringValue = ""
         window.makeFirstResponder(activeTab?.webView)
@@ -1025,15 +1055,28 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         findRequestID = request
         guard let webView = activeTab?.webView, !findField.stringValue.isEmpty else {
             findStatus.stringValue = ""
+            clearFindSelection(in: activeTab?.webView)
             return
         }
         let config = WKFindConfiguration()
         config.backwards = backwards
         config.wraps = true
         webView.find(findField.stringValue, configuration: config) { [weak self, weak webView] result in
-            guard let self, self.findRequestID == request, self.activeTab?.webView === webView, !self.findBar.isHidden else { return }
+            guard let self, let webView else { return }
+            if self.findBar.isHidden || self.activeTab?.webView !== webView {
+                self.clearFindSelection(in: webView)
+                return
+            }
+            guard self.findRequestID == request else { return }
             self.findStatus.stringValue = result.matchFound ? "" : WebHubLanguage.text("No Matches")
         }
+    }
+
+    private func clearFindSelection(in webView: WKWebView?) {
+        guard let webView else { return }
+        // WebKit 的查找指示器独立于 DOM 选区；系统未公开清理接口，运行时检查兼容性。
+        let selector = NSSelectorFromString("_hideFindUI")
+        if webView.responds(to: selector) { webView.perform(selector) }
     }
 
     func controlTextDidChange(_ notification: Notification) {
@@ -1331,7 +1374,21 @@ extension SiteWindowController: NSWindowDelegate {
 
 /// 地址栏用的只读文本框：可选中复制，并兼容 Windows 习惯的 Ctrl+C / Ctrl+A。
 /// macOS 原生只认 Cmd+C，二爷手上是 Ctrl 肌肉记忆，两个都给。
+private final class CenteredAddressCell: NSTextFieldCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        var result = super.drawingRect(forBounds: rect)
+        let height = min(result.height, cellSize(forBounds: rect).height)
+        result.origin.y += (result.height - height) / 2
+        result.size.height = height
+        return result
+    }
+}
+
 final class CopyableTextField: NSTextField {
+    override class var cellClass: AnyClass? {
+        get { CenteredAddressCell.self }
+        set { }
+    }
     override func keyDown(with event: NSEvent) {
         if handleControlCombo(event) { return }
         super.keyDown(with: event)

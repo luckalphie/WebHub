@@ -9,12 +9,20 @@
 # 用法：
 #   sh scripts/build-app.sh
 #   WEBHUB_VERSION=1.2.0 sh scripts/build-app.sh
+#   WEBHUB_SIGN_IDENTITY="WebHub Local Signing" sh scripts/build-app.sh
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 APP="$ROOT/dist/WebHub.app"
 BUNDLE_ID="cn.webhub.launcher"
-VERSION="${WEBHUB_VERSION:-1.0.11}"
+VERSION="${WEBHUB_VERSION:-1.0.12}"
+if [ "${WEBHUB_SIGN_IDENTITY+x}" = x ]; then
+    SIGN_IDENTITY="$WEBHUB_SIGN_IDENTITY"
+elif security find-identity -v -p codesigning 2>/dev/null | grep -Fq '"WebHub Local Signing"'; then
+    SIGN_IDENTITY="WebHub Local Signing"
+else
+    SIGN_IDENTITY="-"
+fi
 
 cd "$ROOT"
 
@@ -129,10 +137,10 @@ PLIST
 xcrun strip -S "$CONTENTS/MacOS/WebHub" 2>/dev/null || true
 xcrun strip -S "$SHIM_APP/Contents/MacOS/WebHubRunner" 2>/dev/null || true
 
-echo "==> 签名（ad-hoc）"
+echo "==> 签名（${SIGN_IDENTITY}）"
 # 先内层后外层，顺序反了外层签名会把内层的签名作废
-codesign --force --sign - "$SHIM_APP"
-codesign --force --sign - "$APP_DIR"
+codesign --force --sign "$SIGN_IDENTITY" "$SHIM_APP"
+codesign --force --sign "$SIGN_IDENTITY" "$APP_DIR"
 
 mkdir -p "$(dirname -- "$APP")"
 rm -rf "$APP"

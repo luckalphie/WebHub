@@ -23,6 +23,21 @@ enum WebHubAppearance: String {
     }
 }
 
+enum SiteChromeColors {
+    private static func adaptive(light: NSColor, dark: CGFloat) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(white: dark, alpha: 1) : light
+        }
+    }
+
+    static let titleBar = adaptive(light: NSColor(srgbRed: 0.82, green: 0.88, blue: 0.98, alpha: 1), dark: 0.075)
+    static let toolbar = adaptive(light: .white, dark: 0.18)
+    static let selectedTab = adaptive(light: .white, dark: 0.18)
+    static let address = adaptive(light: .white, dark: 0.12)
+    static let addressText = adaptive(light: .labelColor, dark: 0.88)
+}
+
 final class AppearanceMenu: NSObject, NSMenuDelegate {
     static let shared = AppearanceMenu()
 

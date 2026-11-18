@@ -61,7 +61,7 @@ private final class TitlebarBackgroundView: AppearanceBackgroundView {
 
 // MARK: - 站点窗口
 
-final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, NSSearchFieldDelegate {
     private static let maxTabWidth: CGFloat = 150
 
     let appID: String
@@ -81,6 +81,10 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     var bookmarkBarHeight: NSLayoutConstraint!
     var bookmarkStack: NSStackView!
     private var contentHost: NSView!
+    private var findBar: NSView!
+    private var findField: NSSearchField!
+    private var findStatus: NSTextField!
+    private var findRequestID = UUID()
     private var addressField: NSTextField!
     private var backButton: NSButton!
     private var forwardButton: NSButton!
@@ -263,6 +267,39 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         contentHost = NSView()
         contentHost.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(contentHost)
+
+        let findBar = AppearanceBackgroundView(backgroundColor: .controlBackgroundColor)
+        findBar.translatesAutoresizingMaskIntoConstraints = false
+        findBar.isHidden = true
+        root.addSubview(findBar, positioned: .above, relativeTo: contentHost)
+        self.findBar = findBar
+        findField = NSSearchField()
+        findField.placeholderString = WebHubLanguage.text("Find in Page")
+        findField.delegate = self
+        findField.sendsSearchStringImmediately = true
+        findStatus = NSTextField(labelWithString: "")
+        findStatus.textColor = .secondaryLabelColor
+        let previous = NSButton(title: "‹", target: self, action: #selector(findPrevious))
+        let next = NSButton(title: "›", target: self, action: #selector(findNext))
+        let close = NSButton(title: "×", target: self, action: #selector(closeFindBar))
+        previous.toolTip = WebHubLanguage.text("Previous Match")
+        next.toolTip = WebHubLanguage.text("Next Match")
+        close.toolTip = WebHubLanguage.text("Close Find")
+        let findStack = NSStackView(views: [findField, findStatus, previous, next, close])
+        findStack.orientation = .horizontal
+        findStack.alignment = .centerY
+        findStack.spacing = 6
+        findStack.translatesAutoresizingMaskIntoConstraints = false
+        findBar.addSubview(findStack)
+        NSLayoutConstraint.activate([
+            findBar.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            findBar.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            findStack.leadingAnchor.constraint(equalTo: findBar.leadingAnchor, constant: 8),
+            findStack.trailingAnchor.constraint(equalTo: findBar.trailingAnchor, constant: -8),
+            findStack.topAnchor.constraint(equalTo: findBar.topAnchor, constant: 6),
+            findStack.bottomAnchor.constraint(equalTo: findBar.bottomAnchor, constant: -6),
+            findField.widthAnchor.constraint(equalToConstant: 220)
+        ])
 
         NSLayoutConstraint.activate([
             // 标签栏在最顶（让开红绿灯）
@@ -581,6 +618,8 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         webView.frame = contentHost.bounds
         webView.autoresizingMask = [.width, .height]
         contentHost.addSubview(webView)
+
+        if !findBar.isHidden { searchPage(backwards: false) }
 
         rebuildTabBar()
         updateAddress()
@@ -946,7 +985,70 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         pastePlain.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(pastePlain)
         menu.addItem(withTitle: WebHubLanguage.text("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        menu.addItem(.separator())
+        let find = NSMenuItem(title: WebHubLanguage.text("Find in Page"), action: #selector(showFindBar), keyEquivalent: "f")
+        find.target = self
+        menu.addItem(find)
+        let next = NSMenuItem(title: WebHubLanguage.text("Next Match"), action: #selector(findNext), keyEquivalent: "g")
+        next.target = self
+        menu.addItem(next)
+        let previous = NSMenuItem(title: WebHubLanguage.text("Previous Match"), action: #selector(findPrevious), keyEquivalent: "G")
+        previous.target = self
+        menu.addItem(previous)
         return menu
+    }
+
+    @objc private func showFindBar() {
+        findBar.isHidden = false
+        window.makeFirstResponder(findField)
+        findField.selectText(nil)
+    }
+
+    @objc private func closeFindBar() {
+        findRequestID = UUID()
+        findBar.isHidden = true
+        findStatus.stringValue = ""
+        window.makeFirstResponder(activeTab?.webView)
+    }
+
+    @objc private func findNext() {
+        if findBar.isHidden { showFindBar() }
+        searchPage(backwards: false)
+    }
+    @objc private func findPrevious() {
+        if findBar.isHidden { showFindBar() }
+        searchPage(backwards: true)
+    }
+
+    private func searchPage(backwards: Bool) {
+        let request = UUID()
+        findRequestID = request
+        guard let webView = activeTab?.webView, !findField.stringValue.isEmpty else {
+            findStatus.stringValue = ""
+            return
+        }
+        let config = WKFindConfiguration()
+        config.backwards = backwards
+        config.wraps = true
+        webView.find(findField.stringValue, configuration: config) { [weak self, weak webView] result in
+            guard let self, self.findRequestID == request, self.activeTab?.webView === webView, !self.findBar.isHidden else { return }
+            self.findStatus.stringValue = result.matchFound ? "" : WebHubLanguage.text("No Matches")
+        }
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard notification.object as? NSSearchField === findField else { return }
+        searchPage(backwards: false)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === findField else { return false }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) { closeFindBar(); return true }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { findPrevious() } else { findNext() }
+            return true
+        }
+        return false
     }
 
     // MARK: WKNavigationDelegate
@@ -1062,6 +1164,8 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         updateToolbarState()
         updateAddress()
+
+        if !findBar.isHidden, activeTab?.webView === webView { searchPage(backwards: false) }
 
         guard let tab = tabs.first(where: { $0.webView === webView }) else { return }
         if let host = webView.url?.host {

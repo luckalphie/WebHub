@@ -83,7 +83,7 @@ private final class TitlebarBackgroundView: AppearanceBackgroundView {
 
 // MARK: - 站点窗口
 
-final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, NSSearchFieldDelegate {
+final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, NSSearchFieldDelegate, NSTextFieldDelegate {
     private static let maxTabWidth: CGFloat = 150
 
     let appID: String
@@ -267,6 +267,9 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         tabBar.addSubview(tabStack)
         tabStackWidth = tabStack.widthAnchor.constraint(equalToConstant: 0)
         tabStackWidth.isActive = true
+        newTabButton = toolbarButton("plus", WebHubLanguage.text("New Tab"), #selector(newTab))
+        newTabButton.isBordered = false
+        tabBar.addSubview(newTabButton)
 
         bookmarkBar = BookmarkScrollView()
         bookmarkBar.onBookmarkDrop = { [weak self] id, index in
@@ -337,8 +340,10 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             topBar.heightAnchor.constraint(equalToConstant: 42),
 
             tabStack.leadingAnchor.constraint(equalTo: tabBar.leadingAnchor, constant: 84),
-            tabStack.widthAnchor.constraint(lessThanOrEqualTo: tabBar.widthAnchor, constant: -94),
-            tabStack.trailingAnchor.constraint(lessThanOrEqualTo: tabBar.trailingAnchor, constant: -10),
+            tabStack.widthAnchor.constraint(lessThanOrEqualTo: tabBar.widthAnchor, constant: -130),
+            newTabButton.leadingAnchor.constraint(equalTo: tabStack.trailingAnchor, constant: 4),
+            newTabButton.trailingAnchor.constraint(lessThanOrEqualTo: tabBar.trailingAnchor, constant: -6),
+            newTabButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
             tabStack.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor),
 
             bookmarkBar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
@@ -359,7 +364,6 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         forwardButton = toolbarButton("chevron.right", WebHubLanguage.text("Forward"), #selector(goForward))
         homeButton = toolbarButton("house", WebHubLanguage.text("Home"), #selector(goHome))
         reloadButton = toolbarButton("arrow.clockwise", WebHubLanguage.text("Reload"), #selector(reload))
-        newTabButton = toolbarButton("plus", WebHubLanguage.text("Duplicate Current Tab"), #selector(newTab))
 
         let buttons = [backButton!, forwardButton!, homeButton!, reloadButton!]
         for b in buttons { topBar.addSubview(b) }
@@ -371,17 +375,17 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         addressField.font = NSFont.systemFont(ofSize: 12.5)
         addressField.textColor = SiteChromeColors.addressText
         addressField.backgroundColor = SiteChromeColors.address
-        addressField.isEditable = false
+        addressField.isEditable = true
         addressField.isSelectable = true
+        addressField.delegate = self
+        addressField.target = self
+        addressField.action = #selector(openAddress)
         addressField.focusRingType = .none
         addressField.lineBreakMode = .byTruncatingMiddle
         // 不加这两行，NSTextField 会按 URL 全长索要宽度，把窗口顶得比屏幕还宽
         addressField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addressField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         topBar.addSubview(addressField)
-
-        newTabButton.translatesAutoresizingMaskIntoConstraints = false
-        topBar.addSubview(newTabButton)
 
         var constraints: [NSLayoutConstraint] = [
             backButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
@@ -394,10 +398,8 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             prev = b
         }
         constraints += [
-            newTabButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -14),
-            newTabButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             addressField.leadingAnchor.constraint(equalTo: prev.trailingAnchor, constant: 12),
-            addressField.trailingAnchor.constraint(equalTo: newTabButton.leadingAnchor, constant: -10),
+            addressField.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -14),
             addressField.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             addressField.heightAnchor.constraint(equalToConstant: 32)
         ]
@@ -434,6 +436,15 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             rebuildTabBar()
         }
         return tab
+    }
+
+    func openBookmarkInCurrentTab(_ url: URL) {
+        guard let tab = activeTab else {
+            addTab(url: url, activate: true)
+            persistSession()
+            return
+        }
+        loadTab(tab).load(URLRequest(url: url))
     }
 
     private func loadTab(_ tab: TabItem) -> WKWebView {
@@ -647,7 +658,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         if !findBar.isHidden { searchPage(backwards: false) }
 
         rebuildTabBar()
-        updateAddress()
+        updateAddress(force: true)
         updateToolbarState()
         window.title = tab.title
         persistSession()
@@ -790,7 +801,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
 
     private func updateTabStackWidth() {
         guard tabStackWidth != nil, tabBar != nil else { return }
-        let available = max(0, tabBar.bounds.width - 94)
+        let available = max(0, tabBar.bounds.width - 130)
         let preferred = CGFloat(tabs.count) * Self.maxTabWidth + CGFloat(max(tabs.count - 1, 0)) * tabStack.spacing
         tabStackWidth.constant = min(available, preferred)
         tabBar.needsDisplay = true
@@ -871,9 +882,11 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         }
     }
 
-    private func updateAddress() {
+    private func updateAddress(force: Bool = false) {
+        if !force, addressField.currentEditor() != nil { return }
         guard let tab = activeTab else { return }
-        addressField.stringValue = tab.webView?.url?.absoluteString ?? tab.url.absoluteString
+        let address = tab.webView?.url?.absoluteString ?? tab.url.absoluteString
+        addressField.stringValue = address == "about:blank" ? "" : address
     }
 
     private func updateToolbarState() {
@@ -899,12 +912,24 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     }
 
     @objc private func newTab() {
-        if let source = activeTab {
-            duplicateTab(source)
-        } else {
-            addTab(url: homeURL, activate: true)
-        }
+        addTab(url: URL(string: "about:blank")!, activate: true, title: WebHubLanguage.text("New Tab"))
         persistSession()
+        window.makeFirstResponder(addressField)
+    }
+
+    @objc private func openAddress() {
+        let text = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let address = text.contains("://") ? text : "https://\(text)"
+        guard let url = URL(string: address), let scheme = url.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"), url.host?.isEmpty == false else { NSSound.beep(); return }
+        activeTab?.webView?.load(URLRequest(url: url))
+        window.makeFirstResponder(activeTab?.webView)
+    }
+
+    @objc private func focusAddress() {
+        window.makeFirstResponder(addressField)
+        addressField.selectText(nil)
     }
 
     @objc private func closeCurrentTab() {
@@ -981,8 +1006,9 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         navMenu.addItem(withTitle: WebHubLanguage.text("Forward"), action: #selector(goForward), keyEquivalent: "]")
         navMenu.addItem(withTitle: WebHubLanguage.text("Home"), action: #selector(goHome), keyEquivalent: "H")
         navMenu.addItem(withTitle: WebHubLanguage.text("Reload"), action: #selector(reload), keyEquivalent: "r")
+        navMenu.addItem(withTitle: WebHubLanguage.text("Open Address"), action: #selector(focusAddress), keyEquivalent: "l")
         navMenu.addItem(NSMenuItem.separator())
-        navMenu.addItem(withTitle: WebHubLanguage.text("Duplicate Current Tab"), action: #selector(newTab), keyEquivalent: "t")
+        navMenu.addItem(withTitle: WebHubLanguage.text("New Tab"), action: #selector(newTab), keyEquivalent: "t")
         navMenu.addItem(withTitle: WebHubLanguage.text("Close Tab"), action: #selector(closeCurrentTab), keyEquivalent: "w")
         navItem.submenu = navMenu
         mainMenu.addItem(navItem)
@@ -1085,6 +1111,11 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if control === addressField, commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            updateAddress(force: true)
+            window.makeFirstResponder(activeTab?.webView)
+            return true
+        }
         guard control === findField else { return false }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) { closeFindBar(); return true }
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {

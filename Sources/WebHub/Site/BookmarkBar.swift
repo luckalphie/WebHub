@@ -299,8 +299,7 @@ extension SiteWindowController {
               let bookmark = AppStore.shared.bookmarks(for: appID).first(where: { $0.id == id }),
               let url = URL(string: bookmark.url) else { return }
         fetchBookmarkIcon(for: bookmark.url, retry: true)
-        addTab(url: url, activate: true)
-        persistSession()
+        openBookmarkInCurrentTab(url)
     }
 
     @objc private func renameBookmark(_ sender: NSMenuItem) {

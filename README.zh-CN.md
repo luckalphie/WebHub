@@ -19,7 +19,7 @@ Swift + WebKit 实现。打包产物面向 **Apple Silicon**，最低系统要�
 - **共享登录态** —— 整个进程只有一个 `WKWebsiteDataStore`，cookie、`localStorage`、`IndexedDB`、Service Worker 全是**同一份数据**，不是定时同步的副本。
 - **密码自动填充** —— 凭据存在 macOS 钥匙串，在 document start 用原生 setter 加合成事件注入，React 和 Vue 的表单都能识别。
 - **按站点退出** —— 关掉某个站点的窗口（⌘Q 或红叉）只结束该站点、只移除它自己的 Dock 图标。退出应用中心才会全部退出。
-- **外链交给系统浏览器** —— 点击主机名与站点不同的链接，不在标签页里打开，而是交给默认浏览器。子域也算出站（`a.example.com` → `b.example.com` 同样出去）；`docs.qq.com/scenario/link.html?url=…` 这类中转包装会先解出真实地址，浏览器不会停在包装页上。自动重定向一律不拦，登录流程不受影响。
+- **外链交给系统浏览器** —— 点击主机名与站点不同的链接，不在标签页里打开，而是交给默认浏览器。子域也算出站（`a.example.com` → `b.example.com` 同样出去）；`docs.qq.com/scenario/link.html?url=…` 这类中转包装会先解出真实地址，浏览器不会停在包装页上。在“支持的域名”中添加域名可让它及其子域名留在 WebHub，填写 `*` 则允许所有域名在 WebHub 内打开。自动重定向一律不拦，登录流程不受影响。
 - **地址栏可复制** —— 选中网址后 ⌘C 复制，也兼容 Ctrl+C；右键菜单里有「复制地址」。
 
 ## 架构

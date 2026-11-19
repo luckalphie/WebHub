@@ -1164,7 +1164,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         return result
     }
 
-    /// 当前站点主机和配置的支持域名留在 WebHub；其余域名交给默认浏览器。
+    /// 当前站点主机和配置的支持域名留在 WebHub；* 表示允许所有域名。
     private func isSameSite(_ host: String) -> Bool {
         let target = Self.normalizedHost(host)
         let site = Self.normalizedHost(siteHost)
@@ -1173,6 +1173,8 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         let configuredApp = AppStore.shared.apps.first(where: { $0.id == appID }) ?? siteApp
         return (configuredApp.supportedDomains ?? []).contains { rawDomain in
             let domain = Self.normalizedHost(rawDomain)
+            // 通配项只放开网页域名，外部应用协议仍由 externalDestination 分流。
+            if domain == "*" { return true }
             return !domain.isEmpty && (target == domain || target.hasSuffix(".\(domain)"))
         }
     }

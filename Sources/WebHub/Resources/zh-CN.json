@@ -73,7 +73,7 @@
   "URL": "网址",
   "https:// is added if omitted": "不写协议会自动补 https://",
   "Supported Domains": "支持的域名",
-  "Separate domains with commas. These domains and their subdomains open in WebHub; other links open in your browser.": "逗号分隔；域名及其子域名留在 WebHub，其他链接用默认浏览器打开。",
+  "Separate domains with commas. These domains and their subdomains open in WebHub; other links open in your browser. Use * to allow all domains.": "逗号分隔；域名及其子域名留在 WebHub，其他链接用默认浏览器打开。填写 * 允许所有域名在 WebHub 内打开。",
   "Sign-in Data": "登录状态",
   "Separate": "独立保存",
   "When off, sign-in data is shared with other apps. When on, sign in again in this app.": "关闭时与其他 WebApp 共享；开启后需在此应用重新登录。",

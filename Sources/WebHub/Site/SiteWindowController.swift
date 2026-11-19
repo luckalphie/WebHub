@@ -1220,8 +1220,12 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     /// 该用默认浏览器打开的地址；nil 表示留在窗口内
     private func externalDestination(for url: URL) -> URL? {
         guard let scheme = url.scheme?.lowercased() else { return nil }
-        // mailto: / tel: / 自定义协议 —— 本进程处理不了，交给系统更合适
-        if scheme != "http" && scheme != "https" { return url }
+        if scheme != "http" && scheme != "https" {
+            // WebKit 原生协议留在内部；blob: 依赖网页上下文，单独保留。
+            if WKWebView.handlesURLScheme(scheme) || scheme == "blob" { return nil }
+            // mailto: / tel: / 其他外部应用协议交给系统。
+            return url
+        }
         let target = Self.unwrapRedirects(url)
         guard let host = target.host, !host.isEmpty else { return nil }
         return isSameSite(host) ? nil : target

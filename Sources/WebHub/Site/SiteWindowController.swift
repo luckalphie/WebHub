@@ -386,6 +386,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         addressField.isBezeled = true
         addressField.bezelStyle = .roundedBezel
         addressField.font = NSFont.systemFont(ofSize: 12.5)
+        addressField.usesSingleLineMode = true
         addressField.textColor = SiteChromeColors.addressText
         addressField.backgroundColor = SiteChromeColors.address
         addressField.isEditable = true
@@ -1417,12 +1418,12 @@ extension SiteWindowController: NSWindowDelegate {
 
 }
 
-/// 地址栏用的只读文本框：可选中复制，并兼容 Windows 习惯的 Ctrl+C / Ctrl+A。
-/// macOS 原生只认 Cmd+C，二爷手上是 Ctrl 肌肉记忆，两个都给。
+/// 地址栏按文字行高居中，避免将边框留白计算为文字高度。
 private final class CenteredAddressCell: NSTextFieldCell {
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
         var result = super.drawingRect(forBounds: rect)
-        let height = min(result.height, cellSize(forBounds: rect).height)
+        let font = self.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let height = min(result.height, ceil(font.ascender - font.descender + font.leading))
         result.origin.y += (result.height - height) / 2
         result.size.height = height
         return result

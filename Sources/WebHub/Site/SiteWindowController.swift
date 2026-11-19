@@ -44,9 +44,21 @@ private final class TabToolTipOwner: NSObject, NSViewToolTipOwner {
 // 全尺寸内容覆盖标题栏时，空白区域由自定义视图接收鼠标事件。
 private final class TitlebarBackgroundView: AppearanceBackgroundView {
     weak var selectedTab: NSView?
+    weak var tabStack: NSStackView?
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        if let tabStack {
+            SiteChromeColors.tabSeparator.setFill()
+            for (left, right) in zip(tabStack.arrangedSubviews, tabStack.arrangedSubviews.dropFirst()) {
+                guard left !== selectedTab, right !== selectedTab else { continue }
+                let leftFrame = convert(left.bounds, from: left)
+                let rightFrame = convert(right.bounds, from: right)
+                let separator = NSRect(x: (leftFrame.maxX + rightFrame.minX) / 2 - 0.5,
+                                       y: leftFrame.midY - 10, width: 1, height: 20)
+                NSBezierPath(roundedRect: separator, xRadius: 0.5, yRadius: 0.5).fill()
+            }
+        }
         guard let selectedTab, selectedTab.superview != nil else { return }
         let frame = convert(selectedTab.bounds, from: selectedTab)
         let radius: CGFloat = 10
@@ -265,6 +277,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         tabStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
         tabStack.setHuggingPriority(.defaultLow, for: .horizontal)
         tabBar.addSubview(tabStack)
+        (tabBar as? TitlebarBackgroundView)?.tabStack = tabStack
         tabStackWidth = tabStack.widthAnchor.constraint(equalToConstant: 0)
         tabStackWidth.isActive = true
         newTabButton = toolbarButton("plus", WebHubLanguage.text("New Tab"), #selector(newTab))

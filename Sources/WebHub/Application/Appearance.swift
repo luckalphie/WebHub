@@ -34,6 +34,7 @@ enum SiteChromeColors {
     static let titleBar = adaptive(light: NSColor(srgbRed: 0.82, green: 0.88, blue: 0.98, alpha: 1), dark: 0.075)
     static let toolbar = adaptive(light: .white, dark: 0.18)
     static let selectedTab = adaptive(light: .white, dark: 0.18)
+    static let tabSeparator = adaptive(light: NSColor(white: 0.60, alpha: 1), dark: 0.30)
     static let address = adaptive(light: .white, dark: 0.12)
     static let addressText = adaptive(light: .labelColor, dark: 0.88)
 }

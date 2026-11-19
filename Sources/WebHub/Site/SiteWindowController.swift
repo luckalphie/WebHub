@@ -200,11 +200,21 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
                 let title = session.titles.flatMap { index < $0.count ? $0[index] : nil }
                 addTab(url: URL(string: u) ?? homeURL, activate: false, title: title)
             }
-            let idx = min(max(session.activeIndex, 0), tabs.count - 1)
-            selectTab(idx)
-        } else {
-            addTab(url: homeURL, activate: true)
         }
+        if let homeIndex = tabs.firstIndex(where: { isHomeURL($0.url) }) {
+            selectTab(homeIndex)
+        } else {
+            addTab(url: homeURL, activate: true, at: 0)
+        }
+    }
+
+    private func isHomeURL(_ url: URL) -> Bool {
+        guard var candidate = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              var home = URLComponents(url: homeURL, resolvingAgainstBaseURL: false) else { return url == homeURL }
+        // 根地址导航后通常会补上斜杠，匹配主页时将两种写法视为相同地址。
+        if candidate.path.isEmpty { candidate.path = "/" }
+        if home.path.isEmpty { home.path = "/" }
+        return candidate == home
     }
 
     /// 当前屏幕的可见区域（扣掉菜单栏与 Dock）
@@ -440,12 +450,14 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     // MARK: 标签管理
 
     @discardableResult
-    func addTab(url: URL, activate: Bool, title: String? = nil) -> TabItem {
+    func addTab(url: URL, activate: Bool, title: String? = nil, at index: Int? = nil) -> TabItem {
         let savedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let tab = TabItem(title: (savedTitle?.isEmpty == false ? savedTitle : nil) ?? url.host ?? WebHubLanguage.text("Loading…"), url: url)
-        tabs.append(tab)
+        let insertionIndex = index ?? tabs.count
+        if !tabs.isEmpty, insertionIndex <= activeIndex { activeIndex += 1 }
+        tabs.insert(tab, at: insertionIndex)
         if activate {
-            selectTab(tabs.count - 1)
+            selectTab(insertionIndex)
         } else {
             rebuildTabBar()
         }

@@ -89,6 +89,6 @@ WebHub contains no telemetry and no analytics. Its only network activity is load
 - Site windows share one WebHub host process. A host crash or main-thread hang affects every site. WebKit uses separate content processes, but complete isolation between sites is not guaranteed.
 - WebHub uses its own website data store and does not directly share Safari's cookies or sign-in state.
 - WebViews use a complete macOS Safari User-Agent, with the version read from the installed Safari app (falling back to Safari 17.0 if unavailable).
-- WebHub attempts to restore a site's saved tabs when that site is reopened; exiting WebHub does not automatically reopen all site windows. Closing the last tab clears that site's saved session.
+- Reopening a site restores its saved tabs and activates the tab matching its home URL. If none matches, a new home tab is inserted first and activated. Exiting WebHub does not automatically reopen all site windows. Closing the last tab clears that site's saved session.
 - Restored tabs load when selected. A tab left in the background for five minutes is unloaded and reloads when selected again; unsaved form input, page state, navigation history, media playback, and live connections may be lost.
 - `Resources/WebHub.icns` is a checked-in binary; `sh tools/make-icon.sh` regenerates it from the drawing code in `tools/makeicon.swift`.

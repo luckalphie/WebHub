@@ -51,6 +51,7 @@ Requires macOS 14 or newer and Swift 6 or newer.
 
 | Command | Result |
 | --- | --- |
+| `sh scripts/build.sh -c release` | Build with the installed macOS SDK and the deployment target from `Package.swift` |
 | `sh scripts/build-app.sh` | Build `dist/WebHub.app` |
 | `sh scripts/run.sh` | Build and run from source |
 | `open Package.swift` | Open the package in Xcode |
@@ -58,6 +59,8 @@ Requires macOS 14 or newer and Swift 6 or newer.
 `sh scripts/build-app.sh` is the supported way to run WebHub. A plain `swift run` produces a bare executable with no bundle identifier, and WebKit behaves poorly without one — window sizing, cookies, and the shim launch path all assume a real `.app`.
 
 Set `WEBHUB_VERSION=1.2.0` to stamp a different marketing version into the bundle.
+
+The build scripts explicitly set the linked SDK version so standard AppKit controls adopt the current system appearance while keeping the macOS 14 deployment target.
 
 ## Install
 

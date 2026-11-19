@@ -29,7 +29,7 @@ jobs:
             sh -n "$script"
           done
       - name: Build
-        run: swift build -c release
+        run: sh scripts/build.sh -c release
       - name: Package app bundle
         run: sh scripts/build-app.sh
       - name: Verify bundle layout
@@ -39,6 +39,16 @@ jobs:
           test -f dist/WebHub.app/Contents/Resources/WebHub.icns
           test -x dist/WebHub.app/Contents/Resources/WebHubRunner.app/Contents/MacOS/WebHubRunner
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" dist/WebHub.app/Contents/Info.plist
+      - name: Verify deployment target and SDK version
+        run: |
+          sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
+          min_version="$(swift package dump-package | plutil -extract platforms.0.version raw -o - -)"
+          for binary in dist/WebHub.app/Contents/MacOS/WebHub dist/WebHub.app/Contents/Resources/WebHubRunner.app/Contents/MacOS/WebHubRunner; do
+            build_info="$(xcrun vtool -show-build "$binary")"
+            printf '%s\n' "$build_info"
+            test "$(printf '%s\n' "$build_info" | awk '$1 == "minos" {print $2}')" = "$min_version"
+            test "$(printf '%s\n' "$build_info" | awk '$1 == "sdk" {print $2}')" = "$sdk_version"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: WebHub-app

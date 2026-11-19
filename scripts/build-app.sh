@@ -27,8 +27,8 @@ fi
 cd "$ROOT"
 
 echo "==> 编译"
-swift build -c release
-BIN_DIR="$(swift build -c release --show-bin-path)"
+sh "$ROOT/scripts/build.sh" -c release
+BIN_DIR="$(sh "$ROOT/scripts/build.sh" -c release --show-bin-path)"
 
 # 打包在临时目录完成，最后整体替换：避免 Finder 在中途缓存到「没有图标」的半成品
 STAGING="$(mktemp -d "$ROOT/.build/package.XXXXXX")"

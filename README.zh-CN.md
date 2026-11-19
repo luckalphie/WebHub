@@ -51,6 +51,7 @@ WebHub.app（唯一真正干活的进程）
 
 | 命令 | 作用 |
 | --- | --- |
+| `sh scripts/build.sh -c release` | 使用本机 macOS SDK 构建，运行下限读取 `Package.swift` |
 | `sh scripts/build-app.sh` | 产出 `dist/WebHub.app` |
 | `sh scripts/run.sh` | 从源码构建并运行 |
 | `open Package.swift` | 用 Xcode 打开工程 |
@@ -58,6 +59,8 @@ WebHub.app（唯一真正干活的进程）
 `sh scripts/build-app.sh` 是受支持的运行方式。直接 `swift run` 出来的是没有 bundle 标识的裸可执行文件，而 WebKit 在没有 bundle 时行为不可靠 —— 窗口尺寸、cookie、shim 的拉起路径都假定自己跑在真正的 `.app` 里。
 
 用 `WEBHUB_VERSION=1.2.0` 可以改写包里的版本号。
+
+构建脚本显式设置链接时的 SDK 版本，让标准 AppKit 控件使用当前系统外观，同时保留 macOS 14 的运行下限。
 
 ## 安装
 

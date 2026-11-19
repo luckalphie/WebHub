@@ -10,8 +10,8 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
 
 echo "==> 编译"
-swift build -c release
-BIN_DIR="$(swift build -c release --show-bin-path)"
+sh "$ROOT/scripts/build.sh" -c release
+BIN_DIR="$(sh "$ROOT/scripts/build.sh" -c release --show-bin-path)"
 
 echo "==> 运行 $BIN_DIR/WebHub"
 echo "    （如需完整功能，改用 sh scripts/build-app.sh）"

@@ -466,6 +466,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         cfg.userContentController.add(self, name: "tab")
 
         let wv = WKWebView(frame: .zero, configuration: cfg)
+        wv.customUserAgent = SafariUserAgent.value
         wv.isInspectable = true
         wv.navigationDelegate = self
         wv.uiDelegate = self

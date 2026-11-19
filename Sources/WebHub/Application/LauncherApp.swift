@@ -24,6 +24,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         config.userContentController.add(self, name: "hub")
 
         webView = WKWebView(frame: .zero, configuration: config)
+        webView.customUserAgent = SafariUserAgent.value
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
         webView.allowsMagnification = false

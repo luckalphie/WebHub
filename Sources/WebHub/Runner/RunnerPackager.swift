@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CryptoKit
+import Security
 import WebHubIPC
 
 /// 把站点打包成独立的 .app，从而在 Dock 里拥有自己的图标
@@ -212,39 +213,39 @@ enum RunnerPackager {
         }
     }
 
-    /// 包内容指纹：站点信息 + 运行器二进制大小 + 图标标识。
+    /// 包内容指纹：站点信息 + 源运行器哈希 + 图标标识。
     /// 用来判断「现有包是否已经是最新的」，避免每次点图标都重写二进制并重签。
     private static func stampText(for app: WebApp, bundleURL: URL) -> String? {
-        let fm = FileManager.default
         guard let src = runnerBinaryPath(),
-              let srcSize = (try? fm.attributesOfItem(atPath: src))?[.size] as? NSNumber
+              let sourceData = try? Data(contentsOf: URL(fileURLWithPath: src)), !sourceData.isEmpty
         else { return nil }
+        let runnerHash = SHA256.hash(data: sourceData).map { String(format: "%02x", $0) }.joined()
         let iconKey = AppStore.shared.iconURL(for: app)
             .flatMap { try? Data(contentsOf: $0) }
             .map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } ?? ""
         // 图标绘制规则变化时更新版本，使已有站点包重新生成图标。
-        return "icon-v13|\(app.id)|\(app.name)|\(app.url)|\(app.iconURL ?? "")|\(app.accent)|\(app.effectiveIconMode.rawValue)|\(srcSize.intValue)|\(iconKey)"
+        return "icon-v13|\(app.id)|\(app.name)|\(app.url)|\(app.iconURL ?? "")|\(app.accent)|\(app.effectiveIconMode.rawValue)|\(runnerHash)|\(iconKey)"
     }
 
     private static func stampURL(_ bundleURL: URL) -> URL {
-        bundleURL.appendingPathComponent("Contents/.webhub-stamp")
+        bundleURL.appendingPathComponent("Contents/Resources/webhub-stamp.txt")
+    }
+
+    private static func hasValidSignature(_ bundleURL: URL) -> Bool {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(bundleURL as CFURL, SecCSFlags(), &code) == errSecSuccess,
+              let code else { return false }
+        return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate), nil) == errSecSuccess
     }
 
     /// 包已是最新且二进制完整时返回 true —— 此时完全跳过覆盖与重签
     private static func isUpToDate(_ app: WebApp, _ bundleURL: URL) -> Bool {
-        let fm = FileManager.default
         guard let want = stampText(for: app, bundleURL: bundleURL),
               let have = try? String(contentsOf: stampURL(bundleURL), encoding: .utf8),
               have.trimmingCharacters(in: .whitespacesAndNewlines) == want
         else { return false }
-        // 指纹一致还要确认可执行文件真的在、且大小与源一致（防止上次构建中断留下残缺包）
-        guard let src = runnerBinaryPath(),
-              let srcSize = (try? fm.attributesOfItem(atPath: src))?[.size] as? NSNumber,
-              let binSize = (try? fm.attributesOfItem(
-                atPath: bundleURL.appendingPathComponent("Contents/MacOS/WebHubRunner").path
-              ))?[.size] as? NSNumber
-        else { return false }
-        return srcSize == binSize && srcSize.intValue > 0
+        // 重签名会改变二进制大小；通过签名校验确认完整性，不能与源文件大小比较。
+        return hasValidSignature(bundleURL)
     }
 
     /// 生成（或更新）某站点的独立 app 包，返回可 open 的 URL
@@ -357,19 +358,44 @@ enum RunnerPackager {
         let plistURL = bundleURL.appendingPathComponent("Contents/Info.plist")
         guard (plist as NSDictionary).write(to: plistURL, atomically: true) else { return nil }
 
-        // 自签名（ad-hoc）
+        // 指纹是普通资源，必须在签名前写入；放在 Contents 根目录会被当成嵌套代码。
+        guard let stamp = stampText(for: app, bundleURL: bundleURL) else { return nil }
+        do {
+            let legacyStamp = bundleURL.appendingPathComponent("Contents/.webhub-stamp")
+            if fm.fileExists(atPath: legacyStamp.path) { try fm.removeItem(at: legacyStamp) }
+            try stamp.write(to: stampURL(bundleURL), atomically: true, encoding: .utf8)
+        } catch {
+            NSLog("[WebHub] 写入站点应用指纹失败（%@）：%@", app.id, error.localizedDescription)
+            return nil
+        }
+        // 签名失败时移除指纹，防止下次误判为已完成打包。
+        var signingSucceeded = false
+        defer {
+            if !signingSucceeded { try? fm.removeItem(at: stampURL(bundleURL)) }
+        }
+
+        // 包内只有主可执行文件，无需递归签名普通资源。
         let sign = Process()
         sign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        sign.arguments = ["--force", "--deep", "--sign", "-", bundleURL.path]
+        sign.arguments = ["--force", "--sign", "-", bundleURL.path]
         sign.standardError = FileHandle.nullDevice
         sign.standardOutput = FileHandle.nullDevice
-        try? sign.run()
-        sign.waitUntilExit()
-
-        // 指纹要在签名之后写：签名会动 _CodeSignature，但不影响指纹内容
-        if let stamp = stampText(for: app, bundleURL: bundleURL) {
-            try? stamp.write(to: stampURL(bundleURL), atomically: true, encoding: .utf8)
+        do {
+            try sign.run()
+        } catch {
+            NSLog("[WebHub] 启动站点应用签名失败（%@）：%@", app.id, error.localizedDescription)
+            return nil
         }
+        sign.waitUntilExit()
+        guard sign.terminationReason == .exit, sign.terminationStatus == 0 else {
+            NSLog("[WebHub] 站点应用签名失败（%@），退出状态：%d", app.id, sign.terminationStatus)
+            return nil
+        }
+        guard hasValidSignature(bundleURL) else {
+            NSLog("[WebHub] 站点应用签名校验失败（%@）", app.id)
+            return nil
+        }
+        signingSucceeded = true
         return bundleURL
     }
 

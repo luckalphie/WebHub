@@ -497,6 +497,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             source: Self.faviconObserverScript,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true))
+        cfg.userContentController.addUserScript(VideoFullscreenGesture.userScript)
         cfg.userContentController.add(self, name: "autofill")
         cfg.userContentController.add(self, name: "tab")
         tab.mediaMonitor.install(in: cfg.userContentController)

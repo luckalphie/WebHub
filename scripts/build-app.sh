@@ -15,7 +15,7 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 APP="$ROOT/dist/WebHub.app"
 BUNDLE_ID="cn.webhub.launcher"
-VERSION="${WEBHUB_VERSION:-1.0.13}"
+VERSION="${WEBHUB_VERSION:-1.0.14}"
 if [ "${WEBHUB_SIGN_IDENTITY+x}" = x ]; then
     SIGN_IDENTITY="$WEBHUB_SIGN_IDENTITY"
 elif security find-identity -v -p codesigning 2>/dev/null | grep -Fq '"WebHub Local Signing"'; then

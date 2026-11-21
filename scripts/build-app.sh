@@ -47,6 +47,10 @@ cp "$ROOT/Sources/WebHub/Resources/zh-CN.json" "$CONTENTS/Resources/zh-CN.json"
 mkdir -p "$CONTENTS/Resources/en.lproj" "$CONTENTS/Resources/zh-Hans.lproj"
 printf '"CFBundleDisplayName" = "WebHub";\n' > "$CONTENTS/Resources/en.lproj/InfoPlist.strings"
 printf '"CFBundleDisplayName" = "WebHub";\n' > "$CONTENTS/Resources/zh-Hans.lproj/InfoPlist.strings"
+cat >> "$CONTENTS/Resources/zh-Hans.lproj/InfoPlist.strings" <<'STRINGS'
+"NSCameraUsageDescription" = "允许你在 WebHub 中为网页会议及其他站点功能使用摄像头。";
+"NSMicrophoneUsageDescription" = "允许你在 WebHub 中为网页会议及其他站点功能使用麦克风。";
+STRINGS
 [ -f "$ROOT/Resources/WebHub.icns" ] || { echo "✗ 缺少 Resources/WebHub.icns" >&2; exit 1; }
 cp "$ROOT/Resources/WebHub.icns" "$CONTENTS/Resources/WebHub.icns"
 if [ -f "$ROOT/LICENSE" ]; then
@@ -117,6 +121,10 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <string>14.0</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Use the camera for video calls and other features on sites you authorize in WebHub.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Use the microphone for calls and other features on sites you authorize in WebHub.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <!-- 自建 WebView 浏览器要能打开任意站点（含内网 http），不能受 ATS 限制 -->

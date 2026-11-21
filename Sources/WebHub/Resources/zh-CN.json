@@ -1,6 +1,8 @@
 {
   "Clear": "清除",
   "Cancel": "取消",
+  "Message from %@": "来自 %@ 的消息",
+  "Download Failed": "下载失败",
   "Could not fetch the website icon; using a name icon.": "未能抓取网站图标，已使用名称图标",
   "About WebHub": "关于 WebHub",
   "Hide WebHub": "隐藏 WebHub",
@@ -34,6 +36,7 @@
   "Hide %@": "隐藏 %@",
   "Quit %@": "退出 %@",
   "\nPage unloads in %@": "\n将在 %@ 后释放网页",
+  "\nPage is in use. Unloading deferred.": "\n网页仍在使用，暂缓释放。",
   "Back": "后退",
   "Forward": "前进",
   "Home": "主页",

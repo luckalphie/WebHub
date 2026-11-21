@@ -17,6 +17,9 @@ final class TabItem {
     var urlObservation: NSKeyValueObservation?
     var unloadWork: DispatchWorkItem?
     var unloadDeadline: Date?
+    var isUnloadDeferred = false
+    let mediaMonitor = TabMediaMonitor()
+    weak var popupOpener: TabItem?
     fileprivate var tooltipOwner: TabToolTipOwner?
 
     init(title: String, url: URL) {
@@ -473,13 +476,19 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         loadTab(tab).load(URLRequest(url: url))
     }
 
-    private func loadTab(_ tab: TabItem) -> WKWebView {
+    private func loadTab(_ tab: TabItem, popupConfiguration: WKWebViewConfiguration? = nil) -> WKWebView {
         if let webView = tab.webView { return webView }
-        let cfg = WKWebViewConfiguration()
-        // 共享数据仓库：所有站点窗口互通 cookie / localStorage → 共享登录态
-        cfg.websiteDataStore = SharedStorage.dataStore(for: siteApp)
-        cfg.defaultWebpagePreferences.allowsContentJavaScript = true
-        cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        let cfg = popupConfiguration ?? WKWebViewConfiguration()
+        if popupConfiguration == nil {
+            cfg.websiteDataStore = SharedStorage.dataStore(for: siteApp)
+            cfg.defaultWebpagePreferences.allowsContentJavaScript = true
+            // WebKit 默认关闭网页元素全屏，视频播放器需要开启 Fullscreen API。
+            cfg.preferences.isElementFullscreenEnabled = true
+            cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        } else {
+            // 保留 WebKit 为弹窗提供的关联配置，同时避免标签之间共用消息处理器。
+            cfg.userContentController = WKUserContentController()
+        }
 
         // 自动填充脚本
         let host = tab.url.host ?? ""
@@ -490,6 +499,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             forMainFrameOnly: true))
         cfg.userContentController.add(self, name: "autofill")
         cfg.userContentController.add(self, name: "tab")
+        tab.mediaMonitor.install(in: cfg.userContentController)
 
         let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.customUserAgent = SafariUserAgent.value
@@ -525,7 +535,8 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             }
         }
 
-        wv.load(URLRequest(url: tab.url))
+        // 弹窗的原始请求由 WebKit 加载，以保留 window.opener 和表单请求。
+        if popupConfiguration == nil { wv.load(URLRequest(url: tab.url)) }
         return wv
     }
 
@@ -543,23 +554,37 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         webView.uiDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "autofill")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "tab")
+        tab.mediaMonitor.uninstall(from: webView.configuration.userContentController)
         webView.removeFromSuperview()
         tab.webView = nil
         tab.unloadDeadline = nil
     }
 
-    private func scheduleTabUnload(_ tab: TabItem) {
+    private func scheduleTabUnload(_ tab: TabItem, retrying: Bool = false) {
         tab.unloadWork?.cancel()
-        guard tab.webView != nil else { return }
-        tab.unloadDeadline = Date().addingTimeInterval(backgroundTabTimeout)
-        let work = DispatchWorkItem { [weak self, weak tab] in
-            guard let self = self, let tab = tab,
-                  self.tabs.contains(where: { $0 === tab }), self.activeTab !== tab else { return }
-            self.unloadTab(tab)
-            self.persistSession()
+        guard let webView = tab.webView else { return }
+        let delay = retrying ? 30 : backgroundTabTimeout
+        let deadline = Date().addingTimeInterval(delay)
+        tab.unloadDeadline = deadline
+        tab.isUnloadDeferred = retrying
+        let work = DispatchWorkItem { [weak self, weak tab, weak webView] in
+            Task { @MainActor in
+                guard let self, let tab, let webView, tab.webView === webView,
+                      tab.unloadDeadline == deadline, self.activeTab !== tab else { return }
+                let hasActiveMedia = await tab.mediaMonitor.hasActiveMedia(in: webView)
+                guard tab.webView === webView, tab.unloadDeadline == deadline, self.activeTab !== tab else { return }
+                let hasPopup = tab.popupOpener?.webView != nil || self.tabs.contains { $0.popupOpener === tab }
+                if hasActiveMedia || webView.fullscreenState != .notInFullscreen
+                    || webView.cameraCaptureState != .none || webView.microphoneCaptureState != .none || hasPopup {
+                    self.scheduleTabUnload(tab, retrying: true)
+                    return
+                }
+                self.unloadTab(tab)
+                self.persistSession()
+            }
         }
         tab.unloadWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + backgroundTabTimeout, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// 标签关闭按钮 + 切换
@@ -666,7 +691,10 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         let previous = activeTab
         let tab = tabs[index]
         if previous !== tab, !findBar.isHidden { clearFindSelection(in: previous?.webView) }
-        if let previous = previous, previous !== tab { scheduleTabUnload(previous) }
+        if let previous, previous !== tab {
+            previous.webView?.isHidden = true
+            scheduleTabUnload(previous)
+        }
         activeIndex = index
         tabActivationHistory.removeAll { $0 === tab }
         tabActivationHistory.insert(tab, at: 0)
@@ -674,13 +702,16 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         tab.unloadWork = nil
         tab.unloadDeadline = nil
 
-        contentHost.subviews.forEach { $0.removeFromSuperview() }
         let webView = loadTab(tab)
-        // WebKit 停靠检查器时会调整网页视图的布局；固定四边约束会遮住检查器。
-        webView.translatesAutoresizingMaskIntoConstraints = true
-        webView.frame = contentHost.bounds
-        webView.autoresizingMask = [.width, .height]
-        contentHost.addSubview(webView)
+        // 隐藏后台标签，保留 WebView 与窗口的关联，直到标签真正闲置。
+        if webView.superview == nil {
+            // WebKit 停靠检查器时会调整网页视图的布局；固定四边约束会遮住检查器。
+            webView.translatesAutoresizingMaskIntoConstraints = true
+            webView.frame = contentHost.bounds
+            webView.autoresizingMask = [.width, .height]
+            contentHost.addSubview(webView)
+        }
+        webView.isHidden = false
 
         if !findBar.isHidden { searchPage(backwards: false) }
 
@@ -837,8 +868,12 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     fileprivate func tooltipText(for tab: TabItem) -> String {
         var tooltip = tab.title
         if tab.webView != nil, tab !== activeTab, let deadline = tab.unloadDeadline {
-            let seconds = max(0, Int(ceil(deadline.timeIntervalSinceNow)))
-            tooltip += WebHubLanguage.format("\nPage unloads in %@", "\(seconds / 60):\(String(format: "%02d", seconds % 60))")
+            if tab.isUnloadDeferred {
+                tooltip += WebHubLanguage.text("\nPage is in use. Unloading deferred.")
+            } else {
+                let seconds = max(0, Int(ceil(deadline.timeIntervalSinceNow)))
+                tooltip += WebHubLanguage.format("\nPage unloads in %@", "\(seconds / 60):\(String(format: "%02d", seconds % 60))")
+            }
         }
         return tooltip
     }
@@ -1220,7 +1255,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     }
 
     /// 该用默认浏览器打开的地址；nil 表示留在窗口内
-    private func externalDestination(for url: URL) -> URL? {
+    private func externalDestination(for url: URL, unwrapRedirects: Bool = true) -> URL? {
         guard let scheme = url.scheme?.lowercased() else { return nil }
         if scheme != "http" && scheme != "https" {
             // WebKit 原生协议留在内部；blob: 依赖网页上下文，单独保留。
@@ -1228,7 +1263,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             // mailto: / tel: / 其他外部应用协议交给系统。
             return url
         }
-        let target = Self.unwrapRedirects(url)
+        let target = unwrapRedirects ? Self.unwrapRedirects(url) : url
         guard let host = target.host, !host.isEmpty else { return nil }
         return isSameSite(host) ? nil : target
     }
@@ -1236,14 +1271,23 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if navigationAction.shouldPerformDownload,
+           let scheme = navigationAction.request.url?.scheme?.lowercased(),
+           scheme == "blob" || WKWebView.handlesURLScheme(scheme) {
+            decisionHandler(.download)
+            return
+        }
         // 只拦「用户真的要去别处」的情况：点击链接，或者要开新窗口。
         // 自动重定向（SSO 回调、登录跳转）不拦 —— 否则会在浏览器里莫名蹦出页面。
         let isUserClick = navigationAction.navigationType == .linkActivated
         let wantsNewWindow = navigationAction.targetFrame == nil
+        let scheme = navigationAction.request.url?.scheme?.lowercased()
+        let isWebLink = scheme == "http" || scheme == "https"
+        let isExternalClick = isUserClick && (navigationAction.targetFrame?.isMainFrame == true || !isWebLink)
 
-        if let url = navigationAction.request.url,
-           let destination = externalDestination(for: url),
-           isUserClick || wantsNewWindow {
+        if isExternalClick || wantsNewWindow,
+           let url = navigationAction.request.url,
+           let destination = externalDestination(for: url, unwrapRedirects: isUserClick) {
             // 中转链接直接开真实地址，别让浏览器停在包装页上
             NSWorkspace.shared.open(destination)
             decisionHandler(.cancel)
@@ -1251,6 +1295,23 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         }
 
         decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        let response = navigationResponse.response as? HTTPURLResponse
+        let disposition = response?.value(forHTTPHeaderField: "Content-Disposition")?
+            .split(separator: ";", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces).lowercased()
+        let isDownload = disposition == "attachment" || (navigationResponse.isForMainFrame && !navigationResponse.canShowMIMEType)
+        decisionHandler(isDownload ? .download : .allow)
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        SiteDownloads.shared.start(download, in: window)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        SiteDownloads.shared.start(download, in: window)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -1292,17 +1353,25 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        // target=_blank 之类：站内开新标签页，站外交给默认浏览器
-        if let url = navigationAction.request.url {
-            if let destination = externalDestination(for: url) {
-                NSWorkspace.shared.open(destination)
-            } else {
-                // 站内中转页也直接落到真实地址，省一次跳转
-                addTab(url: Self.unwrapRedirects(url), activate: true)
-                persistSession()
-            }
+        let url = navigationAction.request.url ?? URL(string: "about:blank")!
+        if let destination = externalDestination(for: url, unwrapRedirects: navigationAction.navigationType == .linkActivated) {
+            NSWorkspace.shared.open(destination)
+            return nil
         }
-        return nil
+
+        let tab = addTab(url: url, activate: false)
+        // 脚本弹窗可能要在登录后通知父页面，关联仍存在时不要卸载其中之一。
+        if navigationAction.navigationType == .other || navigationAction.navigationType == .formSubmitted {
+            tab.popupOpener = tabs.first { $0.webView === webView }
+        }
+        let popup = loadTab(tab, popupConfiguration: configuration)
+        selectTab(tabs.count - 1)
+        return popup
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        guard let index = tabs.firstIndex(where: { $0.webView === webView }) else { return }
+        closeTab(at: index)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {}
@@ -1335,14 +1404,45 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         }
     }
 
-    // 支持 alert/confirm
+    private func scriptDialog(_ message: String, from frame: WKFrameInfo) -> NSAlert {
+        let alert = NSAlert()
+        let origin = frame.securityOrigin
+        let source = origin.host.isEmpty ? appName : origin.host
+        alert.messageText = WebHubLanguage.format("Message from %@", source)
+        alert.informativeText = message
+        alert.addButton(withTitle: WebHubLanguage.text("OK"))
+        return alert
+    }
+
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.addButton(withTitle: WebHubLanguage.text("OK"))
-        alert.runModal()
-        completionHandler()
+        guard let window else { completionHandler(); return }
+        scriptDialog(message, from: frame).beginSheetModal(for: webView.window ?? window) { _ in completionHandler() }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        guard let window else { completionHandler(false); return }
+        let alert = scriptDialog(message, from: frame)
+        alert.addButton(withTitle: WebHubLanguage.text("Cancel"))
+        alert.beginSheetModal(for: webView.window ?? window) { response in
+            completionHandler(response == .alertFirstButtonReturn)
+        }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+                 defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (String?) -> Void) {
+        guard let window else { completionHandler(nil); return }
+        let alert = scriptDialog(prompt, from: frame)
+        alert.addButton(withTitle: WebHubLanguage.text("Cancel"))
+        let input = NSTextField(string: defaultText ?? "")
+        input.frame = NSRect(x: 0, y: 0, width: 260, height: input.intrinsicContentSize.height)
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+        alert.beginSheetModal(for: webView.window ?? window) { response in
+            completionHandler(response == .alertFirstButtonReturn ? input.stringValue : nil)
+        }
     }
 
     // MARK: 消息

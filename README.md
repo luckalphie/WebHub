@@ -16,6 +16,7 @@ This is an independent project and is not affiliated with Apple, Google, or any 
 - **Bookmarks** — save pages from a tab’s context menu in a per-site bookmarks bar; drag to reorder and right-click to manage them. Available page icons are saved with the bookmarks.
 - **Languages** — English and Simplified Chinese, with system or menu selection.
 - **Appearance** — follow the system appearance or choose light or dark mode from the menu.
+- **Network proxy** — configure one HTTP CONNECT or SOCKS5 proxy for all WebHub sites in Application Center settings. The default follows system proxy settings. Changing it preserves the existing sign-in stores.
 - **Shared sign-in** — one `WKWebsiteDataStore` for the whole process, so cookies, `localStorage`, `IndexedDB`, and service workers are literally the same data across all sites. Not synchronized copies: the same file.
 - **Password autofill** — credentials are saved in the macOS Keychain and injected at document start with native setters and composed events, so React and Vue forms pick them up.
 - **Per-site quit** — quitting a site window (⌘Q or the red button) closes only that site and removes only its Dock icon. Quitting the application center quits everything.

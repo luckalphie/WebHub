@@ -54,6 +54,10 @@ final class SiteWindowManager {
         controllers[appID]?.focus()
     }
 
+    func refreshNetworkProxy() {
+        for controller in controllers.values { controller.refreshNetworkProxy() }
+    }
+
     /// 用户在应用中心/菜单里主动关掉某站点
     func close(_ appID: String) {
         controllers[appID]?.hostWindow?.performClose(nil)

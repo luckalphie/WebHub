@@ -156,7 +156,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             }
             items.append(item)
         }
-        let obj: [String: Any] = ["apps": items, "running": RunningApps.shared.ids()]
+        let profile = NetworkProxyStore.shared.profile
+        let proxy: [String: Any] = ["kind": profile?.kind.rawValue ?? "system", "host": profile?.host ?? "", "port": profile.map { String($0.port) } ?? "", "bypass": profile?.bypassDomains.joined(separator: ", ") ?? ""]
+        let obj: [String: Any] = ["apps": items, "running": RunningApps.shared.ids(), "proxy": proxy]
         guard let data = try? JSONSerialization.data(withJSONObject: obj),
               let str = String(data: data, encoding: .utf8) else { return "{\"apps\":[],\"running\":[]}" }
         return str
@@ -197,6 +199,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         let store = AppStore.shared
 
         switch type {
+        case "saveGlobalProxy":
+            saveGlobalProxy(body)
+
         case "setStandaloneApps":
             guard let enabled = body["enabled"] as? Bool else { return }
             setStandaloneApps(enabled)
@@ -288,6 +293,31 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
     // MARK: 登录态
 
+    private func saveGlobalProxy(_ body: [String: Any]) {
+        guard let kind = body["kind"] as? String else { return }
+        let profile: NetworkProxyProfile?
+        if kind == "system" {
+            profile = nil
+        } else {
+            guard let type = NetworkProxyProfile.Kind(rawValue: kind),
+                  let host = body["host"] as? String,
+                  let portText = body["port"] as? String, let port = UInt16(portText),
+                  let value = NetworkProxyProfile(name: "Global", kind: type, host: host, port: port, bypassDomains: body["bypass"] as? String ?? "") else {
+                eval("window.hubToast(\(jsString(WebHubLanguage.text("Enter a valid host and port from 1 to 65535."))))")
+                return
+            }
+            profile = value
+        }
+        do {
+            try NetworkProxyStore.shared.save(profile)
+            SiteWindowManager.shared.refreshNetworkProxy()
+            refresh()
+            eval("window.hubToast(\(jsString(WebHubLanguage.text("Proxy settings saved."))))")
+        } catch {
+            eval("window.hubToast(\(jsString(WebHubLanguage.text("Unable to save proxy settings."))))")
+        }
+    }
+
     /// 清除某站点的登录态（cookie/localStorage）与已保存密码
     private func clearLoginState(for app: WebApp) {
         let host = URL(string: app.url)?.host ?? ""
@@ -314,10 +344,12 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     // MARK: 图标
 
     private func fetchIcon(for app: WebApp, announce: Bool) {
+        let proxy = NetworkProxyStore.shared.profile
         let completion: (Data?) -> Void = { [weak self] png in
             guard let self = self,
                   let current = AppStore.shared.apps.first(where: { $0.id == app.id }),
                   current.url == app.url, current.iconURL == app.iconURL,
+                  NetworkProxyStore.shared.profile == proxy,
                   current.effectiveIconMode == .website else { return }
             if let png = png, let _ = AppStore.shared.setIcon(id: app.id, png: png) {
                 // 重新打包以更新 Dock 图标
@@ -336,9 +368,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             }
         }
         if let iconURL = app.iconURL, !iconURL.isEmpty {
-            IconFetcher.fetchIcon(from: iconURL, completion: completion)
+            IconFetcher.fetchIcon(from: iconURL, proxy: proxy, completion: completion)
         } else {
-            IconFetcher.fetch(for: app.url, completion: completion)
+            IconFetcher.fetch(for: app.url, proxy: proxy, completion: completion)
         }
     }
 

@@ -3,50 +3,70 @@ import Foundation
 
 /// 从站点抓取 favicon / apple-touch-icon
 enum IconFetcher {
+    private struct IconRequest: Hashable {
+        let url: String
+        let proxy: NetworkProxyProfile?
+    }
 
     // 仅合并正在进行的标签图标请求，不缓存结果，以便后续导航获取更新的图标。
-    private static var tabIconRequests: [String: [(Data?) -> Void]] = [:]
+    private static var tabIconRequests: [IconRequest: [(Data?) -> Void]] = [:]
 
-    private static let session: URLSession = {
-        let cfg = URLSessionConfiguration.default
+    private static let systemSession = makeSession(proxy: nil)
+
+    private static func makeSession(proxy: NetworkProxyProfile?) -> URLSession {
+        let cfg: URLSessionConfiguration = proxy == nil ? .default : .ephemeral
         cfg.timeoutIntervalForRequest = 12
         cfg.timeoutIntervalForResource = 20
         cfg.httpMaximumConnectionsPerHost = 4
+        if let proxy { cfg.proxyConfigurations = [proxy.configuration] }
         return URLSession(configuration: cfg)
-    }()
+    }
+
+    private static func session(for proxy: NetworkProxyProfile?) -> URLSession {
+        proxy == nil ? systemSession : makeSession(proxy: proxy)
+    }
+
+    private static func finish(_ session: URLSession) {
+        if session !== systemSession { session.finishTasksAndInvalidate() }
+    }
 
     /// 抓取站点图标；失败返回 nil
     /// - Parameters:
     ///   - pageURL: 站点入口
     ///   - completion: 主线程回调 PNG 数据
-    static func fetch(for pageURL: String, completion: @escaping (Data?) -> Void) {
+    static func fetch(for pageURL: String, proxy: NetworkProxyProfile?, completion: @escaping (Data?) -> Void) {
         guard let url = URL(string: pageURL) else { completion(nil); return }
-        loadHTML(url: url) { html, finalURL in
+        let session = session(for: proxy)
+        loadHTML(url: url, session: session) { html, finalURL in
             let base = finalURL ?? url
             let candidates = iconCandidates(html: html, base: base)
-            downloadFirst(candidates: candidates, index: 0) { data in
+            downloadFirst(candidates: candidates, index: 0, session: session) { data in
+                finish(session)
                 DispatchQueue.main.async { completion(data) }
             }
         }
     }
 
     /// 下载用户指定的图标地址并转为 PNG。
-    static func fetchIcon(from iconURL: String, completion: @escaping (Data?) -> Void) {
+    static func fetchIcon(from iconURL: String, proxy: NetworkProxyProfile?, completion: @escaping (Data?) -> Void) {
         guard let url = URL(string: iconURL),
               let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else {
             DispatchQueue.main.async { completion(nil) }
             return
         }
-        downloadFirst(candidates: [url], index: 0) { data in
+        let session = session(for: proxy)
+        downloadFirst(candidates: [url], index: 0, session: session) { data in
+            finish(session)
             DispatchQueue.main.async { completion(data) }
         }
     }
 
     /// 标签和书签只需要小图；相同地址的并发请求共用一次下载与转换。
-    static func fetchTabIcon(from iconURL: String, completion: @escaping (Data?) -> Void) {
+    static func fetchTabIcon(from iconURL: String, proxy: NetworkProxyProfile?, completion: @escaping (Data?) -> Void) {
         dispatchPrecondition(condition: .onQueue(.main))
-        if tabIconRequests[iconURL] != nil {
-            tabIconRequests[iconURL]?.append(completion)
+        let key = IconRequest(url: iconURL, proxy: proxy)
+        if tabIconRequests[key] != nil {
+            tabIconRequests[key]?.append(completion)
             return
         }
         guard let url = URL(string: iconURL),
@@ -54,10 +74,12 @@ enum IconFetcher {
             completion(nil)
             return
         }
-        tabIconRequests[iconURL] = [completion]
-        downloadFirst(candidates: [url], index: 0, targetSize: 64) { data in
+        tabIconRequests[key] = [completion]
+        let session = session(for: proxy)
+        downloadFirst(candidates: [url], index: 0, session: session, targetSize: 64) { data in
+            finish(session)
             DispatchQueue.main.async {
-                let callbacks = tabIconRequests.removeValue(forKey: iconURL) ?? []
+                let callbacks = tabIconRequests.removeValue(forKey: key) ?? []
                 callbacks.forEach { $0(data) }
             }
         }
@@ -65,7 +87,7 @@ enum IconFetcher {
 
     // MARK: - 内部
 
-    private static func loadHTML(url: URL, completion: @escaping (String?, URL?) -> Void) {
+    private static func loadHTML(url: URL, session: URLSession, completion: @escaping (String?, URL?) -> Void) {
         var request = URLRequest(url: url)
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
         let task = session.dataTask(with: request) { data, response, error in
@@ -181,7 +203,7 @@ enum IconFetcher {
         return hosts
     }
 
-    private static func downloadFirst(candidates: [URL], index: Int, targetSize: CGFloat? = nil, completion: @escaping (Data?) -> Void) {
+    private static func downloadFirst(candidates: [URL], index: Int, session: URLSession, targetSize: CGFloat? = nil, completion: @escaping (Data?) -> Void) {
         guard index < candidates.count else { completion(nil); return }
         let url = candidates[index]
         var request = URLRequest(url: url)
@@ -190,17 +212,17 @@ enum IconFetcher {
         session.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard error == nil, let data = data, data.count > 64, status == 200 else {
-                downloadFirst(candidates: candidates, index: index + 1, targetSize: targetSize, completion: completion)
+                downloadFirst(candidates: candidates, index: index + 1, session: session, targetSize: targetSize, completion: completion)
                 return
             }
             // 校验内容类型，跳过 HTML 错误页
             let ctype = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
             if ctype.contains("text/html") {
-                downloadFirst(candidates: candidates, index: index + 1, targetSize: targetSize, completion: completion)
+                downloadFirst(candidates: candidates, index: index + 1, session: session, targetSize: targetSize, completion: completion)
                 return
             }
             guard let png = normalizeToPNG(data, targetSize: targetSize) else {
-                downloadFirst(candidates: candidates, index: index + 1, targetSize: targetSize, completion: completion)
+                downloadFirst(candidates: candidates, index: index + 1, session: session, targetSize: targetSize, completion: completion)
                 return
             }
             completion(png)

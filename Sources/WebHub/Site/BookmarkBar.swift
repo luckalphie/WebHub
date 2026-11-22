@@ -286,7 +286,7 @@ extension SiteWindowController {
               ["http", "https"].contains(scheme), url.host != nil else { return }
         bookmarkIconRequests.insert(address)
         bookmarkIconsInFlight.insert(address)
-        IconFetcher.fetch(for: address) { [weak self] data in
+        IconFetcher.fetch(for: address, proxy: networkProxy) { [weak self] data in
             guard let self = self else { return }
             self.bookmarkIconsInFlight.remove(address)
             guard self.bookmarkIcons[address] == nil, let data = data else { return }

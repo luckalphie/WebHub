@@ -6,6 +6,19 @@ import WebKit
 // 默认站点共用一个 WKWebsiteDataStore；启用独立登录态时按 WebApp ID 使用持久化仓库。
 
 enum SharedStorage {
+    private static var appliedProxies: [UUID: NetworkProxyProfile] = [:]
+
+    static func applyProxy(_ profile: NetworkProxyProfile?, to store: WKWebsiteDataStore) {
+        guard let id = store.identifier else { return }
+        if let profile {
+            if appliedProxies[id] == profile && !store.proxyConfigurations.isEmpty { return }
+            store.proxyConfigurations = [profile.configuration]
+            appliedProxies[id] = profile
+        } else {
+            if !store.proxyConfigurations.isEmpty { store.proxyConfigurations = [] }
+            appliedProxies.removeValue(forKey: id)
+        }
+    }
 
     private static let identifierFile: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

@@ -105,6 +105,11 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     private let appName: String
     private let homeURL: URL
     private let siteApp: WebApp
+    private lazy var websiteDataStore: WKWebsiteDataStore = {
+        let store = SharedStorage.dataStore(for: siteApp)
+        SharedStorage.applyProxy(networkProxy, to: store)
+        return store
+    }()
 
     private var window: NSWindow!
     private var topBar: NSView!
@@ -161,6 +166,11 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     var siteAppID: String { appID }
     var siteAppName: String { appName }
     var hostWindow: NSWindow? { window }
+    var networkProxy: NetworkProxyProfile? { NetworkProxyStore.shared.profile }
+
+    func refreshNetworkProxy() {
+        SharedStorage.applyProxy(networkProxy, to: websiteDataStore)
+    }
 
     /// 窗口被关掉时通知 manager（manager 据此让对应的 shim 退出、收起 Dock 图标）
     var onWindowClosed: (() -> Void)?
@@ -183,8 +193,6 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         running = true
         observeAppState()
 
-        // 单宿主：所有站点窗口共用同一个 WKWebsiteDataStore，
-        // 登录态本来就是同一份数据，不需要任何预热或同步。
         restoreTabs()
 
         if let runningApp = NSRunningApplication.current as NSRunningApplication? {
@@ -480,7 +488,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         if let webView = tab.webView { return webView }
         let cfg = popupConfiguration ?? WKWebViewConfiguration()
         if popupConfiguration == nil {
-            cfg.websiteDataStore = SharedStorage.dataStore(for: siteApp)
+            cfg.websiteDataStore = websiteDataStore
             cfg.defaultWebpagePreferences.allowsContentJavaScript = true
             // WebKit 默认关闭网页元素全屏，视频播放器需要开启 Fullscreen API。
             cfg.preferences.isElementFullscreenEnabled = true
@@ -933,7 +941,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         tab.faviconURL = requestedURL
         let requestID = UUID()
         tab.faviconRequestID = requestID
-        IconFetcher.fetchTabIcon(from: requestedURL) { [weak self, weak tab, weak webView] png in
+        IconFetcher.fetchTabIcon(from: requestedURL, proxy: networkProxy) { [weak self, weak tab, weak webView] png in
             guard let self = self, let tab = tab, let webView = webView,
                   self.tabs.contains(where: { $0 === tab }), tab.webView === webView,
                   tab.faviconRequestID == requestID else { return }

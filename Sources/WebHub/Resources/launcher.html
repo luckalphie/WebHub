@@ -179,6 +179,10 @@
     -webkit-user-select: text; user-select: text;
   }
   .field input:focus { border-color: rgba(96,165,250,.85); background: rgba(255,255,255,.1); }
+  .field select { width: 100%; padding: 9px 11px; border-radius: 9px; font: inherit; }
+  .proxy-row { display: flex; gap: 10px; }
+  .proxy-row .field:first-child { flex: 1; }
+  .proxy-row .field:last-child { width: 90px; }
   .field.icon-url-field { display: none; }
   .field.icon-url-field.visible { display: block; }
   .field .tip { font-size: 11px; color: rgba(255,255,255,.38); margin-top: 5px; }
@@ -304,6 +308,18 @@
       </div>
       <div class="tip">Create launchable apps in ~/Applications/WebHub Apps. When off, sites still have Dock icons while open.</div>
     </div>
+    <div class="field">
+      <label for="globalProxyKind">Network Proxy</label>
+      <select id="globalProxyKind"><option value="system">Use System Proxy</option><option value="httpConnect">HTTP CONNECT</option><option value="socks5">SOCKS5</option></select>
+    </div>
+    <div id="globalProxyFields" hidden>
+      <div class="proxy-row">
+        <div class="field"><label for="globalProxyHost">Host</label><input id="globalProxyHost" placeholder="127.0.0.1" spellcheck="false"></div>
+        <div class="field"><label for="globalProxyPort">Port</label><input id="globalProxyPort" type="number" min="1" max="65535"></div>
+      </div>
+      <div class="field"><label for="globalProxyBypass">Bypass Domains</label><input id="globalProxyBypass" placeholder="localhost, example.com" spellcheck="false"></div>
+    </div>
+    <button type="button" class="btn" id="saveGlobalProxy">Save Proxy</button>
     <div class="sheet-actions"><button type="button" class="btn" id="closeSettings">Done</button></div>
   </div>
 </div>
@@ -397,7 +413,24 @@ const menu = document.getElementById('menu');
 const mask = document.getElementById('mask');
 const settingsMask = document.getElementById('settingsMask');
 const standaloneApps = document.getElementById('standaloneApps');
-document.getElementById('settingsButton').addEventListener('click', () => settingsMask.classList.add('show'));
+const globalProxyKind = document.getElementById('globalProxyKind');
+const globalProxyHost = document.getElementById('globalProxyHost');
+const globalProxyPort = document.getElementById('globalProxyPort');
+const globalProxyBypass = document.getElementById('globalProxyBypass');
+const globalProxyFields = document.getElementById('globalProxyFields');
+function showProxySettings() {
+  const proxy = state.proxy || {};
+  globalProxyKind.value = proxy.kind || 'system';
+  globalProxyHost.value = proxy.host || '';
+  globalProxyPort.value = proxy.port || '';
+  globalProxyBypass.value = proxy.bypass || '';
+  globalProxyFields.hidden = globalProxyKind.value === 'system';
+}
+globalProxyKind.addEventListener('change', () => { globalProxyFields.hidden = globalProxyKind.value === 'system'; });
+document.getElementById('saveGlobalProxy').addEventListener('click', () => {
+  post('saveGlobalProxy', { kind: globalProxyKind.value, host: globalProxyHost.value.trim(), port: globalProxyPort.value, bypass: globalProxyBypass.value.trim() });
+});
+document.getElementById('settingsButton').addEventListener('click', () => { showProxySettings(); settingsMask.classList.add('show'); });
 document.getElementById('closeSettings').addEventListener('click', () => settingsMask.classList.remove('show'));
 settingsMask.addEventListener('click', event => { if (event.target === settingsMask) settingsMask.classList.remove('show'); });
 standaloneApps.addEventListener('change', () => {

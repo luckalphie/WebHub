@@ -461,16 +461,15 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
-        mainMenu.addItem(LanguageMenu.shared.makeItem())
-        mainMenu.addItem(AppearanceMenu.shared.makeItem())
+        mainMenu.addItem(ViewMenu.makeItem())
         launcherMenu = mainMenu
-        NSApplication.shared.mainMenu = mainMenu
+        WindowHelpMenus.shared.activate(mainMenu)
     }
 
     /// 站点窗口切走后再切回应用中心：把菜单还原成启动器这份
     func windowDidBecomeKey(_ notification: Notification) {
         if let m = launcherMenu, NSApplication.shared.mainMenu !== m {
-            NSApplication.shared.mainMenu = m
+            WindowHelpMenus.shared.activate(m)
         }
     }
 
@@ -479,7 +478,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     /// 按 Cmd+Q 会毫无反应。
     func restoreMenu() {
         guard let m = launcherMenu else { return }
-        NSApplication.shared.mainMenu = m
+        WindowHelpMenus.shared.activate(m)
     }
 
     private func setStandaloneApps(_ enabled: Bool) {

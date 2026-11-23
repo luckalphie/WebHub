@@ -1084,15 +1084,14 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         navItem.submenu = navMenu
         mainMenu.addItem(navItem)
 
-        mainMenu.addItem(LanguageMenu.shared.makeItem())
-        mainMenu.addItem(AppearanceMenu.shared.makeItem())
+        mainMenu.addItem(ViewMenu.makeItem())
 
         // 单宿主下所有站点窗口共享同一个 NSApplication：
         // 不能在这里直接抢全局 mainMenu，否则后开的站点会把前面的菜单顶掉。
         // 改为记下来，等本窗口成为 key window 时再切换（见 windowDidBecomeKey）。
         siteMenu = mainMenu
         if window?.isKeyWindow == true {
-            NSApplication.shared.mainMenu = mainMenu
+            WindowHelpMenus.shared.activate(mainMenu)
         }
     }
 
@@ -1513,7 +1512,7 @@ extension SiteWindowController: NSWindowDelegate {
     /// 单宿主下菜单是全局的，谁成为 key window 谁切自己那份
     func windowDidBecomeKey(_ notification: Notification) {
         if let m = siteMenu, NSApplication.shared.mainMenu !== m {
-            NSApplication.shared.mainMenu = m
+            WindowHelpMenus.shared.activate(m)
         }
     }
 

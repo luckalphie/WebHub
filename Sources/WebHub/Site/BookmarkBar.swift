@@ -212,9 +212,8 @@ extension SiteWindowController {
                 button.heightAnchor.constraint(equalToConstant: bookmarkBarContentHeight - 6).isActive = true
                 button.setContentCompressionResistancePriority(.required, for: .horizontal)
                 button.identifier = identifier
-                button.toolTip = bookmark.url
                 let menu = NSMenu()
-                for (title, action) in [(WebHubLanguage.text("Open in New Tab"), #selector(openBookmarkInNewTab(_:))), (WebHubLanguage.text("Edit Name"), #selector(renameBookmark(_:))), (WebHubLanguage.text("Copy Address"), #selector(copyBookmark(_:))), (WebHubLanguage.text("Delete Bookmark"), #selector(deleteBookmark(_:)))] {
+                for (title, action) in [(WebHubLanguage.text("Open in New Tab"), #selector(openBookmarkInNewTab(_:))), (WebHubLanguage.text("Edit Bookmark"), #selector(editBookmark(_:))), (WebHubLanguage.text("Copy Address"), #selector(copyBookmark(_:))), (WebHubLanguage.text("Delete Bookmark"), #selector(deleteBookmark(_:)))] {
                     let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
                     item.target = self
                     item.representedObject = bookmark.id
@@ -222,6 +221,7 @@ extension SiteWindowController {
                 }
                 button.menu = menu
             }
+            button.toolTip = bookmark.url
             if bookmarkIcons[bookmark.url] == nil, let data = bookmark.iconData, let image = NSImage(data: data) {
                 image.size = NSSize(width: 16, height: 16)
                 bookmarkIcons[bookmark.url] = image
@@ -311,20 +311,51 @@ extension SiteWindowController {
         persistSession()
     }
 
-    @objc private func renameBookmark(_ sender: NSMenuItem) {
+    @objc private func editBookmark(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
         var items = AppStore.shared.bookmarks(for: appID)
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let alert = NSAlert()
-        alert.messageText = WebHubLanguage.text("Edit Bookmark Name")
-        let field = NSTextField(string: items[index].title)
-        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
-        alert.accessoryView = field
+        alert.messageText = WebHubLanguage.text("Edit Bookmark")
+        let titleField = NSTextField(string: items[index].title)
+        let urlField = NSTextField(string: items[index].url)
+        let titleLabel = NSTextField(labelWithString: WebHubLanguage.text("Name"))
+        let urlLabel = NSTextField(labelWithString: WebHubLanguage.text("URL"))
+        titleField.setAccessibilityLabel(titleLabel.stringValue)
+        urlField.setAccessibilityLabel(urlLabel.stringValue)
+        let fields = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 104))
+        titleLabel.frame = NSRect(x: 0, y: 87, width: 360, height: 17)
+        titleField.frame = NSRect(x: 0, y: 59, width: 360, height: 24)
+        urlLabel.frame = NSRect(x: 0, y: 29, width: 360, height: 17)
+        urlField.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
+        titleLabel.autoresizingMask = [.width]
+        urlLabel.autoresizingMask = [.width]
+        titleField.autoresizingMask = [.width]
+        urlField.autoresizingMask = [.width]
+        fields.addSubview(titleLabel)
+        fields.addSubview(titleField)
+        fields.addSubview(urlLabel)
+        fields.addSubview(urlField)
+        alert.accessoryView = fields
+        alert.window.initialFirstResponder = titleField
         alert.addButton(withTitle: WebHubLanguage.text("Save"))
         alert.addButton(withTitle: WebHubLanguage.text("Cancel"))
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return }
+        var title: String
+        var address: String
+        repeat {
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            title = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            address = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !address.isEmpty && address != items[index].url && !address.contains("://") { address = "https://\(address)" }
+            if !title.isEmpty, let url = URL(string: address), let scheme = url.scheme?.lowercased(),
+               (address == items[index].url || ((scheme == "http" || scheme == "https") && url.host?.isEmpty == false)) { break }
+            NSSound.beep()
+        } while true
+        if items[index].url != address {
+            items[index].url = address
+            items[index].iconData = nil
+            bookmarkIconRequests.remove(address)
+        }
         items[index].title = title
         saveBookmarks(items)
     }

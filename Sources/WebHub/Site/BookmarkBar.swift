@@ -214,7 +214,7 @@ extension SiteWindowController {
                 button.identifier = identifier
                 button.toolTip = bookmark.url
                 let menu = NSMenu()
-                for (title, action) in [(WebHubLanguage.text("Edit Name"), #selector(renameBookmark(_:))), (WebHubLanguage.text("Copy Address"), #selector(copyBookmark(_:))), (WebHubLanguage.text("Delete Bookmark"), #selector(deleteBookmark(_:)))] {
+                for (title, action) in [(WebHubLanguage.text("Open in New Tab"), #selector(openBookmarkInNewTab(_:))), (WebHubLanguage.text("Edit Name"), #selector(renameBookmark(_:))), (WebHubLanguage.text("Copy Address"), #selector(copyBookmark(_:))), (WebHubLanguage.text("Delete Bookmark"), #selector(deleteBookmark(_:)))] {
                     let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
                     item.target = self
                     item.representedObject = bookmark.id
@@ -300,6 +300,15 @@ extension SiteWindowController {
               let url = URL(string: bookmark.url) else { return }
         fetchBookmarkIcon(for: bookmark.url, retry: true)
         openBookmarkInCurrentTab(url)
+    }
+
+    @objc private func openBookmarkInNewTab(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let bookmark = AppStore.shared.bookmarks(for: appID).first(where: { $0.id == id }),
+              let url = URL(string: bookmark.url) else { return }
+        fetchBookmarkIcon(for: bookmark.url, retry: true)
+        addTab(url: url, activate: true, title: bookmark.title)
+        persistSession()
     }
 
     @objc private func renameBookmark(_ sender: NSMenuItem) {

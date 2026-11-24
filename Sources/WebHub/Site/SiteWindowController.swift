@@ -1063,6 +1063,10 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         appMenu.addItem(withTitle: WebHubLanguage.format("About %@", appName), action: #selector(aboutSite), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: WebHubLanguage.format("Hide %@", appName), action: #selector(hideSite), keyEquivalent: "h")
+        let settingsItem = NSMenuItem(title: WebHubLanguage.text("Settings") + "…", action: #selector(LauncherAppDelegate.showSettings(_:)), keyEquivalent: ",")
+        settingsItem.target = NSApp.delegate
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: WebHubLanguage.format("Quit %@", appName), action: #selector(closeSite), keyEquivalent: "q")
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)

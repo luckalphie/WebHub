@@ -71,6 +71,10 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    @objc func showSettings(_ sender: Any?) {
+        controller?.showSettings()
+    }
+
     /// 退出时只清理已登记且身份仍匹配的站点辅助进程。
     func applicationWillTerminate(_ notification: Notification) {
         SiteWindowManager.shared.terminateAllShims()

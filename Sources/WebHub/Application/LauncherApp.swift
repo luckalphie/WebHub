@@ -7,6 +7,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     private var window: NSWindow!
     private var webView: WKWebView!
     private var ready = false
+    private var pendingSettings = false
     private var pendingPayload: String?
     private let windowFrameKey = "WebHub.launcherWindowFrame"
     private var changingFullScreen = false
@@ -57,7 +58,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
         buildMenu()
         if !RunnerPackager.hasStandalonePreference {
-            DispatchQueue.main.async { [weak self] in self?.disableStandaloneApps() }
+            DispatchQueue.main.async { [weak self] in self?.disableStandaloneApps { _ in } }
         }
         installPasteShortcut()
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
@@ -75,6 +76,12 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         if w.isMiniaturized { w.deminiaturize(nil) }
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func showSettings() {
+        reveal()
+        guard ready else { pendingSettings = true; return }
+        eval("window.hubOpenSettings()")
     }
 
     /// 关红叉只是收起窗口，进程留在后台 —— 和 Chrome 一致。
@@ -159,7 +166,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             items.append(item)
         }
         let profile = NetworkProxyStore.shared.profile
-        let proxy: [String: Any] = ["kind": profile?.kind.rawValue ?? "system", "host": profile?.host ?? "", "port": profile.map { String($0.port) } ?? "", "bypass": profile?.bypassDomains.joined(separator: ", ") ?? ""]
+        let proxy: [String: Any] = ["kind": profile?.kind.rawValue ?? "system", "host": profile?.host ?? "", "port": profile.map { String($0.port) } ?? "", "bypass": profile?.bypassDomains.joined(separator: ", ") ?? "", "username": profile?.username ?? "", "hasPassword": profile?.password != nil]
         let obj: [String: Any] = ["apps": items, "running": RunningApps.shared.ids(), "proxy": proxy]
         guard let data = try? JSONSerialization.data(withJSONObject: obj),
               let str = String(data: data, encoding: .utf8) else { return "{\"apps\":[],\"running\":[]}" }
@@ -190,6 +197,10 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         refresh()
         refreshRunning()
         updateStandaloneControl()
+        if pendingSettings {
+            pendingSettings = false
+            eval("window.hubOpenSettings()")
+        }
     }
 
     // MARK: 消息桥
@@ -201,12 +212,8 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         let store = AppStore.shared
 
         switch type {
-        case "saveGlobalProxy":
-            saveGlobalProxy(body)
-
-        case "setStandaloneApps":
-            guard let enabled = body["enabled"] as? Bool else { return }
-            setStandaloneApps(enabled)
+        case "saveSettings":
+            saveSettings(body)
 
         case "open":
             guard let id = body["id"] as? String,
@@ -295,28 +302,54 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
     // MARK: 登录态
 
-    private func saveGlobalProxy(_ body: [String: Any]) {
-        guard let kind = body["kind"] as? String else { return }
+    private func saveSettings(_ body: [String: Any]) {
+        guard let kind = body["kind"] as? String, let enabled = body["enabled"] as? Bool else {
+            eval("window.hubSettingsSaved(false)")
+            return
+        }
         let profile: NetworkProxyProfile?
         if kind == "system" {
             profile = nil
         } else {
+            let username = (body["username"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let enteredPassword = body["password"] as? String ?? ""
+            guard !username.isEmpty || enteredPassword.isEmpty else {
+                eval("window.hubToast(\(jsString(WebHubLanguage.text("Enter a proxy username."))))")
+                eval("window.hubSettingsSaved(false)")
+                return
+            }
+            let previous = NetworkProxyStore.shared.profile
+            let host = body["host"] as? String ?? ""
+            let portText = body["port"] as? String ?? ""
+            let canReusePassword = previous?.kind.rawValue == kind && previous?.host == host.trimmingCharacters(in: .whitespacesAndNewlines) && previous.map { String($0.port) } == portText && previous?.username == username
+            let password = username.isEmpty ? nil : (enteredPassword.isEmpty && canReusePassword ? previous?.password : enteredPassword)
+            guard username.isEmpty || !(password ?? "").isEmpty else {
+                eval("window.hubToast(\(jsString(WebHubLanguage.text("Enter a proxy password."))))")
+                eval("window.hubSettingsSaved(false)")
+                return
+            }
             guard let type = NetworkProxyProfile.Kind(rawValue: kind),
-                  let host = body["host"] as? String,
-                  let portText = body["port"] as? String, let port = UInt16(portText),
-                  let value = NetworkProxyProfile(name: "Global", kind: type, host: host, port: port, bypassDomains: body["bypass"] as? String ?? "") else {
+                  let port = UInt16(portText),
+                  let value = NetworkProxyProfile(name: "Global", kind: type, host: host, port: port, bypassDomains: body["bypass"] as? String ?? "", username: username, password: password) else {
                 eval("window.hubToast(\(jsString(WebHubLanguage.text("Enter a valid host and port from 1 to 65535."))))")
+                eval("window.hubSettingsSaved(false)")
                 return
             }
             profile = value
         }
-        do {
-            try NetworkProxyStore.shared.save(profile)
-            SiteWindowManager.shared.refreshNetworkProxy()
-            refresh()
-            eval("window.hubToast(\(jsString(WebHubLanguage.text("Proxy settings saved."))))")
-        } catch {
-            eval("window.hubToast(\(jsString(WebHubLanguage.text("Unable to save proxy settings."))))")
+        setStandaloneApps(enabled) { [weak self] success in
+            guard let self else { return }
+            guard success else { self.eval("window.hubSettingsSaved(false)"); return }
+            do {
+                try NetworkProxyStore.shared.save(profile)
+                SiteWindowManager.shared.refreshNetworkProxy()
+                self.refresh()
+                self.eval("window.hubSettingsSaved(true)")
+                self.eval("window.hubToast(\(jsString(WebHubLanguage.text("Proxy settings saved."))))")
+            } catch {
+                self.eval("window.hubSettingsSaved(false)")
+                self.eval("window.hubToast(\(jsString(WebHubLanguage.text("Unable to save proxy settings."))))")
+            }
         }
     }
 
@@ -426,6 +459,10 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: WebHubLanguage.text("About WebHub"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
+        let settingsItem = NSMenuItem(title: WebHubLanguage.text("Settings") + "…", action: #selector(LauncherAppDelegate.showSettings(_:)), keyEquivalent: ",")
+        settingsItem.target = NSApp.delegate
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: WebHubLanguage.text("Hide WebHub"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: WebHubLanguage.text("Quit WebHub"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -483,15 +520,16 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         WindowHelpMenus.shared.activate(m)
     }
 
-    private func setStandaloneApps(_ enabled: Bool) {
-        guard !changingStandaloneApps else { updateStandaloneControl(); return }
-        guard enabled != RunnerPackager.createsStandaloneApps else { updateStandaloneControl(); return }
+    private func setStandaloneApps(_ enabled: Bool, completion: @escaping (Bool) -> Void) {
+        guard !changingStandaloneApps else { updateStandaloneControl(); completion(false); return }
+        guard enabled != RunnerPackager.createsStandaloneApps else { updateStandaloneControl(); completion(true); return }
         if !enabled {
-            disableStandaloneApps()
+            disableStandaloneApps(completion: completion)
         } else {
             RunnerPackager.createsStandaloneApps = true
             updateStandaloneControl()
             createStandaloneApps(AppStore.shared.apps)
+            completion(true)
         }
     }
 
@@ -516,14 +554,15 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         }
     }
 
-    private func disableStandaloneApps() {
-        guard !changingStandaloneApps else { return }
+    private func disableStandaloneApps(completion: @escaping (Bool) -> Void) {
+        guard !changingStandaloneApps else { completion(false); return }
         let bundles: [URL]
         do { bundles = try RunnerPackager.standaloneBundles() }
         catch {
             RunnerPackager.createsStandaloneApps = true
             updateStandaloneControl()
             showStandaloneError(error)
+            completion(false)
             return
         }
         let paths = Set(bundles.map { $0.resolvingSymlinksInPath().path })
@@ -540,6 +579,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             guard alert.runModal() == .alertFirstButtonReturn else {
                 RunnerPackager.createsStandaloneApps = true
                 updateStandaloneControl()
+                completion(false)
                 return
             }
         }
@@ -553,14 +593,14 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             }
             runner?.requestTermination()
         }
-        finishDisablingStandaloneApps(bundles, running: running, deadline: Date().addingTimeInterval(5))
+        finishDisablingStandaloneApps(bundles, running: running, deadline: Date().addingTimeInterval(5), completion: completion)
     }
 
-    private func finishDisablingStandaloneApps(_ bundles: [URL], running: [NSRunningApplication], deadline: Date) {
+    private func finishDisablingStandaloneApps(_ bundles: [URL], running: [NSRunningApplication], deadline: Date, completion: @escaping (Bool) -> Void) {
         if running.contains(where: { !$0.isTerminated }) {
             if Date() < deadline {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                    self?.finishDisablingStandaloneApps(bundles, running: running, deadline: deadline)
+                    self?.finishDisablingStandaloneApps(bundles, running: running, deadline: deadline, completion: completion)
                 }
                 return
             }
@@ -572,6 +612,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             alert.messageText = WebHubLanguage.text("Some standalone apps did not quit")
             alert.informativeText = WebHubLanguage.text("No standalone apps were removed. Close them and try again.")
             alert.runModal()
+            completion(false)
             return
         }
         do {
@@ -584,6 +625,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         changingStandaloneApps = false
         RunnerPackager.isChangingStandaloneApps = false
         updateStandaloneControl()
+        completion(!RunnerPackager.createsStandaloneApps)
     }
 
     private func showStandaloneError(_ error: Error) {

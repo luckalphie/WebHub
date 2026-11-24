@@ -163,13 +163,16 @@
   }
   .sheet-mask.show { display: flex; }
   .sheet {
-    width: 396px; padding: 24px; border-radius: 18px;
+    width: 396px; max-height: calc(100vh - 32px); overflow-y: auto; box-sizing: border-box; padding: 24px; border-radius: 18px;
     background: rgba(34,40,54,.94);
     border: 1px solid rgba(255,255,255,.13);
     box-shadow: 0 30px 70px rgba(0,0,0,.55);
     animation: pop .16s ease-out;
   }
   .sheet h2 { margin: 0 0 18px; font-size: 15.5px; font-weight: 600; }
+  .settings-heading { display: flex; align-items: flex-start; justify-content: space-between; }
+  .settings-close { border: 0; padding: 0; margin-top: -3px; background: transparent; color: inherit; font: inherit; font-size: 22px; line-height: 1; opacity: .65; cursor: default; }
+  .settings-close:hover { opacity: 1; }
   .field { margin-bottom: 14px; }
   .field label { display: block; font-size: 11.5px; color: rgba(255,255,255,.55); margin-bottom: 6px; letter-spacing: .2px; }
   .field input {
@@ -184,6 +187,7 @@
   .proxy-row { display: flex; gap: 10px; }
   .proxy-row .field:first-child { flex: 1; }
   .proxy-row .field:last-child { width: 90px; }
+  .proxy-row.proxy-auth .field { flex: 1 1 0; width: auto; min-width: 0; }
   .field.icon-url-field { display: none; }
   .field.icon-url-field.visible { display: block; }
   .field .tip { font-size: 11px; color: rgba(255,255,255,.38); margin-top: 5px; }
@@ -301,7 +305,7 @@
 
 <div class="sheet-mask" id="settingsMask">
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-    <h2 id="settingsTitle">Settings</h2>
+    <div class="settings-heading"><h2 id="settingsTitle">Settings</h2><button type="button" class="settings-close" id="closeSettings" aria-label="Close">&times;</button></div>
     <div class="field">
       <div class="login-setting-row">
         <span class="login-setting-title" id="standaloneLabel">Create Standalone Apps</span>
@@ -318,10 +322,16 @@
         <div class="field"><label for="globalProxyHost">Host</label><input id="globalProxyHost" placeholder="127.0.0.1" spellcheck="false"></div>
         <div class="field"><label for="globalProxyPort">Port</label><input id="globalProxyPort" type="number" min="1" max="65535"></div>
       </div>
+      <div class="proxy-row proxy-auth">
+        <div class="field"><label for="globalProxyUsername">Proxy Username</label><input id="globalProxyUsername" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="globalProxyPassword">Proxy Password</label><input id="globalProxyPassword" type="password" autocomplete="new-password"></div>
+      </div>
       <div class="field"><label for="globalProxyBypass">Bypass Domains</label><input id="globalProxyBypass" placeholder="localhost, example.com" spellcheck="false"></div>
     </div>
-    <button type="button" class="btn" id="saveGlobalProxy">Save Proxy</button>
-    <div class="sheet-actions"><button type="button" class="btn" id="closeSettings">Done</button></div>
+    <div class="sheet-actions">
+      <button type="button" class="btn" id="cancelSettings">Cancel</button>
+      <button type="button" class="btn primary" id="confirmSettings">Confirm</button>
+    </div>
   </div>
 </div>
 
@@ -418,26 +428,40 @@ const globalProxyKind = document.getElementById('globalProxyKind');
 const globalProxyHost = document.getElementById('globalProxyHost');
 const globalProxyPort = document.getElementById('globalProxyPort');
 const globalProxyBypass = document.getElementById('globalProxyBypass');
+const globalProxyUsername = document.getElementById('globalProxyUsername');
+const globalProxyPassword = document.getElementById('globalProxyPassword');
 const globalProxyFields = document.getElementById('globalProxyFields');
+const confirmSettings = document.getElementById('confirmSettings');
+let savedStandaloneApps = false;
+let settingsBusy = false;
+document.getElementById('closeSettings').setAttribute('aria-label', tr('Close'));
 function showProxySettings() {
   const proxy = state.proxy || {};
   globalProxyKind.value = proxy.kind || 'system';
   globalProxyHost.value = proxy.host || '';
   globalProxyPort.value = proxy.port || '';
   globalProxyBypass.value = proxy.bypass || '';
+  globalProxyUsername.value = proxy.username || '';
+  globalProxyPassword.value = '';
+  globalProxyPassword.placeholder = proxy.hasPassword ? '********' : '';
   globalProxyFields.hidden = globalProxyKind.value === 'system';
 }
 globalProxyKind.addEventListener('change', () => { globalProxyFields.hidden = globalProxyKind.value === 'system'; });
-document.getElementById('saveGlobalProxy').addEventListener('click', () => {
-  post('saveGlobalProxy', { kind: globalProxyKind.value, host: globalProxyHost.value.trim(), port: globalProxyPort.value, bypass: globalProxyBypass.value.trim() });
+confirmSettings.addEventListener('click', () => {
+  if (settingsBusy) return;
+  settingsBusy = true;
+  confirmSettings.disabled = true;
+  post('saveSettings', { enabled: standaloneApps.checked, kind: globalProxyKind.value, host: globalProxyHost.value.trim(), port: globalProxyPort.value, bypass: globalProxyBypass.value.trim(), username: globalProxyUsername.value.trim(), password: globalProxyPassword.value });
 });
-document.getElementById('settingsButton').addEventListener('click', () => { showProxySettings(); settingsMask.classList.add('show'); });
-document.getElementById('closeSettings').addEventListener('click', () => settingsMask.classList.remove('show'));
-settingsMask.addEventListener('click', event => { if (event.target === settingsMask) settingsMask.classList.remove('show'); });
-standaloneApps.addEventListener('change', () => {
-  standaloneApps.disabled = true;
-  post('setStandaloneApps', { enabled: standaloneApps.checked });
-});
+function closeSettings() { if (!settingsBusy) { globalProxyPassword.value = ''; settingsMask.classList.remove('show'); } }
+window.hubOpenSettings = function () {
+  if (settingsMask.classList.contains('show')) return;
+  standaloneApps.checked = savedStandaloneApps; showProxySettings(); settingsMask.classList.add('show');
+};
+document.getElementById('settingsButton').addEventListener('click', window.hubOpenSettings);
+document.getElementById('cancelSettings').addEventListener('click', closeSettings);
+document.getElementById('closeSettings').addEventListener('click', closeSettings);
+settingsMask.addEventListener('click', event => { if (event.target === settingsMask) closeSettings(); });
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
@@ -644,13 +668,19 @@ btnSave.addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeSheet(); hideMenu(); settingsMask.classList.remove('show'); }
+  if (e.key === 'Escape') { closeSheet(); hideMenu(); closeSettings(); }
   if (e.key === 'Enter' && mask.classList.contains('show')) btnSave.click();
 });
 
 // ---------- 来自原生 ----------
+window.hubSettingsSaved = function (success) {
+  settingsBusy = false;
+  confirmSettings.disabled = false;
+  if (success) closeSettings();
+};
 window.hubSetStandaloneApps = function (enabled, busy) {
-  standaloneApps.checked = enabled;
+  savedStandaloneApps = enabled;
+  if (!settingsMask.classList.contains('show') || settingsBusy) standaloneApps.checked = enabled;
   standaloneApps.disabled = busy;
 };
 window.hubRender = function (json) {

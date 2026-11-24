@@ -15,7 +15,7 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 APP="$ROOT/dist/WebHub.app"
 BUNDLE_ID="cn.webhub.launcher"
-VERSION="${WEBHUB_VERSION:-1.0.16}"
+VERSION="${WEBHUB_VERSION:-1.1.0}"
 if [ "${WEBHUB_SIGN_IDENTITY+x}" = x ]; then
     SIGN_IDENTITY="$WEBHUB_SIGN_IDENTITY"
 elif security find-identity -v -p codesigning 2>/dev/null | grep -Fq '"WebHub Local Signing"'; then
@@ -37,10 +37,13 @@ trap 'rm -rf "$STAGING"' EXIT HUP INT TERM
 APP_DIR="$STAGING/WebHub.app"
 CONTENTS="$APP_DIR/Contents"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
+mkdir -p "$CONTENTS/Frameworks"
+cp -R "$BIN_DIR/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
 
 echo "==> 组装资源"
 cp "$BIN_DIR/WebHub" "$CONTENTS/MacOS/WebHub"
 chmod +x "$CONTENTS/MacOS/WebHub"
+xcrun install_name_tool -add_rpath '@executable_path/../Frameworks' "$CONTENTS/MacOS/WebHub"
 cp "$ROOT/Sources/WebHub/Resources/launcher.html" "$CONTENTS/Resources/launcher.html"
 cp "$ROOT/Sources/WebHub/Resources/zh-CN.json" "$CONTENTS/Resources/zh-CN.json"
 # Let macOS discover the app's supported languages through standard bundle resources.
@@ -80,7 +83,7 @@ cat > "$SHIM_APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -102,6 +105,12 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <string>WebHub</string>
     <key>CFBundleDisplayName</key>
     <string>WebHub</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/luckalphie/WebHub/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>wofTIhLvgQEaDauho0UXR6/HPZ/Dq64hTK7J9nBXYAg=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <false/>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleLocalizations</key>
@@ -116,7 +125,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSPrincipalClass</key>

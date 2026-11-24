@@ -1062,6 +1062,9 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         // 所以这里的「隐藏 / 退出」**绝不能**用 NSApplication.hide/terminate ——
         // 那会把整个 WebHub 连同其他站点一起收掉。必须降级成「只作用于本窗口」。
         appMenu.addItem(withTitle: WebHubLanguage.format("About %@", appName), action: #selector(aboutSite), keyEquivalent: "")
+        let updateItem = NSMenuItem(title: WebHubLanguage.text("Check for Updates…"), action: #selector(UpdateChecker.checkForUpdates(_:)), keyEquivalent: "")
+        updateItem.target = UpdateChecker.shared
+        appMenu.addItem(updateItem)
         appMenu.addItem(NSMenuItem.separator())
         let settingsItem = NSMenuItem(title: WebHubLanguage.text("Settings") + "…", action: #selector(LauncherAppDelegate.showSettings(_:)), keyEquivalent: ",")
         settingsItem.target = NSApp.delegate

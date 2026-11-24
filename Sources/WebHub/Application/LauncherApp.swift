@@ -458,6 +458,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: WebHubLanguage.text("About WebHub"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let updateItem = NSMenuItem(title: WebHubLanguage.text("Check for Updates…"), action: #selector(UpdateChecker.checkForUpdates(_:)), keyEquivalent: "")
+        updateItem.target = UpdateChecker.shared
+        appMenu.addItem(updateItem)
         appMenu.addItem(NSMenuItem.separator())
         let settingsItem = NSMenuItem(title: WebHubLanguage.text("Settings") + "…", action: #selector(LauncherAppDelegate.showSettings(_:)), keyEquivalent: ",")
         settingsItem.target = NSApp.delegate

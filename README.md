@@ -61,11 +61,13 @@ Requires macOS 14 or newer and Swift 6 or newer.
 
 Set `WEBHUB_VERSION=1.2.0` to stamp a different marketing version into the bundle.
 
+To prepare a Sparkle update, build the intended version, then run `sh scripts/prepare-update.sh` on the machine holding the `cn.webhub.updates` Sparkle signing key. Upload the resulting ZIP and `appcast.xml` to the matching GitHub release. The latest release must include both files. Keep the update signing key safe and back it up securely; losing it prevents signing updates for existing installations. Automatic update checks are disabled; users initiate checks from the application menu.
+
 The build scripts explicitly set the linked SDK version so standard AppKit controls adopt the current system appearance while keeping the macOS 14 deployment target.
 
 ## Install
 
-Packaged builds are ad hoc signed and **not notarized**. macOS may refuse to open a downloaded copy. After attempting to open it, use **System Settings → Privacy & Security → Open Anyway** if you trust the source. There is no need to disable system security.
+Packaged builds use a local signing identity when available, otherwise ad hoc signing, and are **not notarized**. macOS may refuse to open a downloaded copy. After attempting to open it, use **System Settings → Privacy & Security → Open Anyway** if you trust the source. There is no need to disable system security.
 
 ## Where data lives
 

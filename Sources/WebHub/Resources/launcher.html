@@ -75,7 +75,7 @@
   /* 图标单元 */
   .app {
     width: var(--tile); display: flex; flex-direction: column; align-items: center;
-    gap: 8px; cursor: default; position: relative;
+    gap: 14px; cursor: default; position: relative;
     transition: transform .16s cubic-bezier(.3,.9,.3,1);
   }
   .app:hover { transform: translateY(-2px); }
@@ -103,10 +103,11 @@
   }
   .icon .icon-name.white-text { text-shadow: 0 1px 3px rgba(0,0,0,.62); }
   .icon-name-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .icon .badge {
-    position: absolute; right: -5px; top: -5px;
-    width: 13px; height: 13px; border-radius: 50%;
-    background: #34d399; border: 2.5px solid #131a2c;
+  .app .badge {
+    position: absolute; top: calc(var(--tile) + 4px); left: 50%;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(255,255,255,.72); transform: translateX(-50%);
+    pointer-events: none;
     opacity: 0; transition: opacity .2s;
   }
   .app.running .badge { opacity: 1; }
@@ -245,7 +246,7 @@
     .gridwrap::-webkit-scrollbar-thumb { background-color: rgba(35,48,69,.25); }
     .app.drop-target::before { border-color: rgba(35,48,69,.5); }
     .icon { box-shadow: 0 10px 26px rgba(46,65,94,.2), 0 1px 0 rgba(255,255,255,.5) inset; }
-    .icon .badge { border-color: #edf2f9; }
+    .app .badge { background: rgba(35,48,69,.65); }
     .app.add .icon { background: rgba(255,255,255,.45); border-color: rgba(52,72,102,.35); }
     .app.add .icon span { color: rgba(35,48,69,.7); }
     .app.add:hover .icon { background: rgba(255,255,255,.7); border-color: rgba(52,72,102,.55); }
@@ -498,7 +499,6 @@ function tile(app) {
   el.innerHTML = `
     <div class="icon" style="background:linear-gradient(160deg, ${esc(app.accent)}, ${esc(app.accent)}cc)">
       ${iconInner}
-      <div class="badge"></div>
     </div>
     <div class="name">${esc(app.name)}</div>`;
 
@@ -524,6 +524,7 @@ function tile(app) {
     el.classList.remove('drop-target');
     const from = e.dataTransfer.getData('text/plain');
     const to = app.id;
+    <div class="badge" aria-hidden="true"></div>
     if (from && from !== to) post('move', { from, to });
   });
 
@@ -660,7 +661,13 @@ window.hubRender = function (json) {
 };
 window.hubSetRunning = function (listJSON) {
   try { state.running = JSON.parse(listJSON); } catch (_) { state.running = []; }
-  render();
+  const running = new Set(state.running);
+  for (const app of grid.querySelectorAll('.app[data-id]')) {
+    const isRunning = running.has(app.dataset.id);
+    if (app.classList.contains('running') !== isRunning) {
+      app.classList.toggle('running', isRunning);
+    }
+  }
 };
 window.hubToast = function (msg) {
   const t = document.createElement('div');

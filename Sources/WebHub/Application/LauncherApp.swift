@@ -63,6 +63,8 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
                                                name: NSApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(saveWindowFrameOnExit),
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
+                                               name: SiteWindowManager.runningSitesDidChange, object: nil)
                                                name: NSApplication.willTerminateNotification, object: nil)
     }
 
@@ -614,16 +616,6 @@ final class RunningApps {
     static let shared = RunningApps()
 
     func ids() -> [String] {
-        let store = AppStore.shared
-        var result: [String] = []
-        for app in store.apps {
-            let bundleID = "cn.webhub.runner.\(app.id)"
-            if isRunning(bundleID: bundleID) { result.append(app.id) }
-        }
-        return result
-    }
-
-    private func isRunning(bundleID: String) -> Bool {
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty == false
+        SiteWindowManager.shared.openSiteIDs
     }
 }

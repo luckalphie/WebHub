@@ -11,6 +11,7 @@ import WebHubIPC
 /// 关闭独立 App 时，所有站点复用一个 Helper（见 Runner/main.swift）：
 /// Helper 不建窗口、不加载 WebKit，只负责通过 CFMessagePort 请本进程开窗。
 final class SiteWindowManager {
+    static let runningSitesDidChange = Notification.Name("WebHub.runningSitesDidChange")
 
     static let shared = SiteWindowManager()
 
@@ -52,6 +53,7 @@ final class SiteWindowManager {
 
     func activate(_ appID: String) {
         controllers[appID]?.focus()
+        NotificationCenter.default.post(name: Self.runningSitesDidChange, object: nil)
     }
 
     func refreshNetworkProxy() {
@@ -71,6 +73,7 @@ final class SiteWindowManager {
     }
 
     /// WebHub 退出时把所有 shim 一起收掉，别在 Dock 里留孤儿图标
+        NotificationCenter.default.post(name: Self.runningSitesDidChange, object: nil)
     func terminateAllShims() {
         let processes = Array(shims.values)
         shims.removeAll()

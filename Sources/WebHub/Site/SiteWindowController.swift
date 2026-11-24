@@ -261,6 +261,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             backing: .buffered, defer: false
         )
         window.title = appName
+        window.isExcludedFromWindowsMenu = true
         // ⚠️ ARC 下必须关掉：默认 true 时窗口 close 后会被系统 release 一次，
         // 而 controller 仍持有 window 引用 → 变成野指针，再访问 isVisible 就 SIGSEGV。
         // 这是「关掉一个站点窗口后偶发崩溃」的根源。
@@ -1062,11 +1063,11 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         // 那会把整个 WebHub 连同其他站点一起收掉。必须降级成「只作用于本窗口」。
         appMenu.addItem(withTitle: WebHubLanguage.format("About %@", appName), action: #selector(aboutSite), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: WebHubLanguage.format("Hide %@", appName), action: #selector(hideSite), keyEquivalent: "h")
         let settingsItem = NSMenuItem(title: WebHubLanguage.text("Settings") + "…", action: #selector(LauncherAppDelegate.showSettings(_:)), keyEquivalent: ",")
         settingsItem.target = NSApp.delegate
         appMenu.addItem(settingsItem)
         appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: WebHubLanguage.format("Hide %@", appName), action: #selector(hideSite), keyEquivalent: "h")
         appMenu.addItem(withTitle: WebHubLanguage.format("Quit %@", appName), action: #selector(closeSite), keyEquivalent: "q")
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)

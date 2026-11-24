@@ -11,37 +11,58 @@ enum ViewMenu {
     }
 }
 
-/// 两类窗口切换菜单时复用同一组系统窗口和帮助菜单。
-final class WindowHelpMenus: NSObject {
+/// 每套主菜单拥有自己的窗口和帮助菜单，切换时不移动正在显示的菜单项。
+final class WindowHelpMenus: NSObject, NSMenuDelegate {
     static let shared = WindowHelpMenus()
-
-    private let windowItem = NSMenuItem()
-    private let helpItem = NSMenuItem()
-    private let windowMenu = NSMenu(title: WebHubLanguage.text("Window"))
-    private let helpMenu = NSMenu(title: WebHubLanguage.text("Help"))
-
-    private override init() {
-        super.init()
-        windowMenu.addItem(withTitle: WebHubLanguage.text("Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: WebHubLanguage.text("Zoom"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowMenu.addItem(.separator())
-        windowMenu.addItem(withTitle: WebHubLanguage.text("Bring All to Front"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
-        windowItem.submenu = windowMenu
-
-        let help = NSMenuItem(title: WebHubLanguage.text("WebHub Help"), action: #selector(openHelp), keyEquivalent: "")
-        help.target = self
-        helpMenu.addItem(help)
-        helpItem.submenu = helpMenu
-    }
+    private let dynamicItemTag = 0x574853
 
     func activate(_ menu: NSMenu) {
-        windowItem.menu?.removeItem(windowItem)
-        helpItem.menu?.removeItem(helpItem)
-        menu.addItem(windowItem)
-        menu.addItem(helpItem)
+        if !menu.items.contains(where: { $0.submenu?.delegate === self }) {
+            let windowItem = NSMenuItem()
+            let windowMenu = NSMenu(title: WebHubLanguage.text("Window"))
+            windowMenu.addItem(withTitle: WebHubLanguage.text("Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+            windowMenu.addItem(withTitle: WebHubLanguage.text("Zoom"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+            windowMenu.addItem(.separator())
+            windowMenu.addItem(withTitle: WebHubLanguage.text("Bring All to Front"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+            windowMenu.delegate = self
+            windowItem.submenu = windowMenu
+            menu.addItem(windowItem)
+
+            let helpItem = NSMenuItem()
+            let helpMenu = NSMenu(title: WebHubLanguage.text("Help"))
+            let help = NSMenuItem(title: WebHubLanguage.text("WebHub Help"), action: #selector(openHelp), keyEquivalent: "")
+            help.target = self
+            helpMenu.addItem(help)
+            helpItem.submenu = helpMenu
+            menu.addItem(helpItem)
+        }
+        guard let windowMenu = menu.items.compactMap(\.submenu).first(where: { $0.delegate === self }),
+              let helpMenu = menu.items.compactMap(\.submenu).first(where: { $0.title == WebHubLanguage.text("Help") }) else { return }
         NSApp.mainMenu = menu
         NSApp.windowsMenu = windowMenu
         NSApp.helpMenu = helpMenu
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        for item in menu.items where item.tag == dynamicItemTag { menu.removeItem(item) }
+        let sites = SiteWindowManager.shared.openSites
+        guard !sites.isEmpty else { return }
+        let separator = NSMenuItem.separator()
+        separator.tag = dynamicItemTag
+        menu.addItem(separator)
+        for site in sites {
+            let item = NSMenuItem(title: site.name, action: #selector(activateSite(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = site.id
+            item.state = site.isKey ? .on : .off
+            item.tag = dynamicItemTag
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func activateSite(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        SiteWindowManager.shared.activate(id)
     }
 
     @objc private func openHelp() {

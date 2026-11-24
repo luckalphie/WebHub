@@ -63,9 +63,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         installPasteShortcut()
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
                                                name: NSApplication.didBecomeActiveNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(saveWindowFrameOnExit),
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
                                                name: SiteWindowManager.runningSitesDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(saveWindowFrameOnExit),
                                                name: NSApplication.willTerminateNotification, object: nil)
     }
 

@@ -524,6 +524,7 @@ function tile(app) {
     <div class="icon" style="background:linear-gradient(160deg, ${esc(app.accent)}, ${esc(app.accent)}cc)">
       ${iconInner}
     </div>
+    <div class="badge" aria-hidden="true"></div>
     <div class="name">${esc(app.name)}</div>`;
 
   el.addEventListener('dblclick', () => post('open', { id: app.id }));
@@ -548,7 +549,6 @@ function tile(app) {
     el.classList.remove('drop-target');
     const from = e.dataTransfer.getData('text/plain');
     const to = app.id;
-    <div class="badge" aria-hidden="true"></div>
     if (from && from !== to) post('move', { from, to });
   });
 

@@ -27,6 +27,10 @@ final class SiteWindowManager {
 
     var hasAnySiteWindow: Bool { !controllers.isEmpty }
     var openSiteIDs: [String] { Array(controllers.keys) }
+    var openSites: [(id: String, name: String, isKey: Bool)] {
+        controllers.values.map { (id: $0.siteAppID, name: $0.siteAppName, isKey: $0.hostWindow?.isKeyWindow == true) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedSame ? $0.id < $1.id : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
 
     /// 最后一个站点窗口也关掉时回调（宿主据此把菜单还原成应用中心那份）
     var onAllSitesClosed: (() -> Void)?
@@ -49,11 +53,11 @@ final class SiteWindowManager {
         }
         controllers[app.id] = wc
         wc.show()
+        NotificationCenter.default.post(name: Self.runningSitesDidChange, object: nil)
     }
 
     func activate(_ appID: String) {
         controllers[appID]?.focus()
-        NotificationCenter.default.post(name: Self.runningSitesDidChange, object: nil)
     }
 
     func refreshNetworkProxy() {
@@ -69,11 +73,11 @@ final class SiteWindowManager {
     private func siteWindowDidClose(_ appID: String) {
         controllers.removeValue(forKey: appID)
         shims.removeValue(forKey: appID)?.requestTermination()
+        NotificationCenter.default.post(name: Self.runningSitesDidChange, object: nil)
         if controllers.isEmpty { onAllSitesClosed?() }
     }
 
     /// WebHub 退出时把所有 shim 一起收掉，别在 Dock 里留孤儿图标
-        NotificationCenter.default.post(name: Self.runningSitesDidChange, object: nil)
     func terminateAllShims() {
         let processes = Array(shims.values)
         shims.removeAll()

@@ -10,7 +10,8 @@ final class LauncherWindowController: NSObject, NSWindowDelegate {
     private var launcherView: NSHostingView<LauncherView>!
     private lazy var settingsController = SettingsController(
         parentWindow: { [weak self] in self?.window },
-        onRefresh: { [weak self] in self?.refresh() }
+        onRefresh: { [weak self] in self?.refresh() },
+        onPreviewIconSize: { [weak self] size in self?.model.iconSize = size }
     )
     private var changingFullScreen = false
     /// 单宿主下菜单是全局的，站点窗口会挂上自己那份；切回应用中心时要还原
@@ -145,6 +146,7 @@ final class LauncherWindowController: NSObject, NSWindowDelegate {
         self.iconKeys = iconKeys
         model.icons = icons
         model.apps = apps
+        model.iconSize = AppCenterIconSize.preference
     }
 
     @objc private func refreshRunning() {

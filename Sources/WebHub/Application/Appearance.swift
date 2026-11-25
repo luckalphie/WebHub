@@ -24,6 +24,29 @@ enum WebHubAppearance: String {
     }
 }
 
+enum AppCenterIconSize {
+    static let minimum: CGFloat = 72
+    static let maximum: CGFloat = 160
+    static let step: CGFloat = 4
+    static let defaultValue: CGFloat = 100
+
+    private static let preferenceKey = "WebHub.appCenterIconSize"
+
+    static var preference: CGFloat {
+        guard UserDefaults.standard.object(forKey: preferenceKey) != nil else { return defaultValue }
+        return normalized(CGFloat(UserDefaults.standard.double(forKey: preferenceKey)))
+    }
+
+    static func normalized(_ value: CGFloat) -> CGFloat {
+        let clamped = min(max(value, minimum), maximum)
+        return (clamped / step).rounded() * step
+    }
+
+    static func save(_ value: CGFloat) {
+        UserDefaults.standard.set(Double(normalized(value)), forKey: preferenceKey)
+    }
+}
+
 enum SiteChromeColors {
     private static func adaptive(light: NSColor, dark: CGFloat) -> NSColor {
         NSColor(name: nil) { appearance in

@@ -7,6 +7,7 @@ final class LauncherModel: ObservableObject {
     @Published var icons: [String: NSImage] = [:]
     @Published var running: Set<String> = []
     @Published var editor: EditorRequest?
+    @Published var iconSize = AppCenterIconSize.preference
     var action: ([String: Any]) -> Void = { _ in }
     var edit: (String?) -> Void = { _ in }
     var settings: () -> Void = {}
@@ -23,7 +24,12 @@ struct LauncherView: View {
     @State private var hoveredID: String?
     @State private var draggedID: String?
     @State private var dropTargetID: String?
-    private let columns = [GridItem(.adaptive(minimum: 112, maximum: 132), spacing: 20)]
+
+    private var iconSize: CGFloat { model.iconSize }
+    private var tileWidth: CGFloat { iconSize + 10 }
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: iconSize + 12, maximum: iconSize + 32), spacing: 20)]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -44,14 +50,17 @@ struct LauncherView: View {
                             .onDrag {
                                 draggedID = app.id
                                 return NSItemProvider(object: app.id as NSString)
-                            } preview: { tile(app).frame(width: 110) }
+                            } preview: { tile(app).frame(width: tileWidth) }
                             .onDrop(of: [.plainText], delegate: AppTileDropDelegate(targetID: app.id, draggedID: $draggedID, dropTargetID: $dropTargetID, action: model.action))
                     }
                     Button(action: { model.edit(nil) }) {
                         VStack(spacing: 8) {
-                            Image(systemName: "plus").font(.system(size: 32)).frame(width: 80, height: 80).background(.quaternary, in: RoundedRectangle(cornerRadius: 18))
+                            Image(systemName: "plus")
+                                .font(.system(size: iconSize * 0.32))
+                                .frame(width: iconSize * 0.8, height: iconSize * 0.8)
+                                .background(.quaternary, in: RoundedRectangle(cornerRadius: iconSize * 0.18))
                             Text(WebHubLanguage.text("Add")).font(.caption)
-                        }
+                        }.frame(width: tileWidth)
                     }.buttonStyle(.plain)
                 }.padding(8)
             }
@@ -84,12 +93,12 @@ struct LauncherView: View {
                         Text(app.name).font(.headline).multilineTextAlignment(.center).lineLimit(3).padding(6)
                     }
                 }
-                .frame(width: 100, height: 100)
+                .frame(width: iconSize, height: iconSize)
                 // 图标图片四周有透明边距，扣除底部留白以居中运行指示点。
-                .padding(.bottom, model.icons[app.id] == nil ? 0 : -10)
+                .padding(.bottom, model.icons[app.id] == nil ? 0 : -iconSize * 0.1)
                 Circle().fill(model.running.contains(app.id) ? Color.primary.opacity(0.55) : .clear).frame(width: 5, height: 5)
                 Text(app.name).font(.caption).lineLimit(2).multilineTextAlignment(.center)
-            }.frame(width: 110)
+            }.frame(width: tileWidth)
         }
         .buttonStyle(.plain)
         .offset(y: hoveredID == app.id ? -2 : 0)

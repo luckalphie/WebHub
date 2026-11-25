@@ -5,6 +5,8 @@ private final class SettingsModel: ObservableObject {
     @Published var busy = false
     var saveSettings: ([String: Any]) -> Void = { _ in }
     var dismissSettings: () -> Void = {}
+    var cancelSettings: () -> Void = {}
+    var previewIconSize: (CGFloat) -> Void = { _ in }
     var resizeSettings: () -> Void = {}
 }
 
@@ -12,15 +14,19 @@ final class SettingsController: NSObject, NSWindowDelegate {
     private let model = SettingsModel()
     private let parentWindow: () -> NSWindow?
     private let onRefresh: () -> Void
+    private let onPreviewIconSize: (CGFloat) -> Void
     private var window: NSPanel?
     private var changingStandaloneApps = false
 
-    init(parentWindow: @escaping () -> NSWindow?, onRefresh: @escaping () -> Void) {
+    init(parentWindow: @escaping () -> NSWindow?, onRefresh: @escaping () -> Void, onPreviewIconSize: @escaping (CGFloat) -> Void) {
         self.parentWindow = parentWindow
         self.onRefresh = onRefresh
+        self.onPreviewIconSize = onPreviewIconSize
         super.init()
         model.saveSettings = { [weak self] in self?.save($0) }
         model.dismissSettings = { [weak self] in self?.dismiss() }
+        model.cancelSettings = { [weak self] in self?.cancel() }
+        model.previewIconSize = { [weak self] in self?.onPreviewIconSize($0) }
         model.resizeSettings = { [weak self] in self?.resizeWindow() }
     }
 
@@ -57,12 +63,18 @@ final class SettingsController: NSObject, NSWindowDelegate {
         NSApp.stopModal()
     }
 
+    func cancel() {
+        guard let window, !model.busy, NSApp.modalWindow === window else { return }
+        onPreviewIconSize(AppCenterIconSize.preference)
+        NSApp.stopModal()
+    }
+
     func owns(_ candidate: NSWindow) -> Bool {
         window === candidate
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        dismiss()
+        cancel()
         return false
     }
 
@@ -74,7 +86,8 @@ final class SettingsController: NSObject, NSWindowDelegate {
     func save(_ body: [String: Any]) {
         guard let kind = body["kind"] as? String, let enabled = body["enabled"] as? Bool,
               let appearanceValue = body["appearance"] as? String, let appearance = WebHubAppearance(rawValue: appearanceValue),
-              let language = body["language"] as? String, ["system", "en", "zh-CN"].contains(language) else {
+              let language = body["language"] as? String, ["system", "en", "zh-CN"].contains(language),
+              let iconSize = (body["iconSize"] as? Double).map({ AppCenterIconSize.normalized(CGFloat($0)) }) else {
             model.busy = false
             return
         }
@@ -119,6 +132,8 @@ final class SettingsController: NSObject, NSWindowDelegate {
                 let languageChanged = (body["languageChanged"] as? Bool == true) && language != WebHubLanguage.languagePreference
                 if body["appearanceChanged"] as? Bool == true { WebHubAppearance.select(appearance) }
                 if languageChanged { UserDefaults.standard.set(language, forKey: "WebHub.language") }
+                AppCenterIconSize.save(iconSize)
+                self.onPreviewIconSize(iconSize)
                 self.onRefresh()
                 self.model.busy = false
                 self.dismiss()
@@ -276,6 +291,7 @@ private struct SettingsView: View {
     @State private var appearanceBaseline = WebHubAppearance.preference.rawValue
     @State private var language = WebHubLanguage.languagePreference
     @State private var languageBaseline = WebHubLanguage.languagePreference
+    @State private var iconSize = AppCenterIconSize.preference
     @State private var standalone = RunnerPackager.createsStandaloneApps
     @State private var kind = NetworkProxyStore.shared.profile?.kind.rawValue ?? "system"
     @State private var host = NetworkProxyStore.shared.profile?.host ?? ""
@@ -293,6 +309,16 @@ private struct SettingsView: View {
                 }
                 settingsField("Language") {
                     SettingsPopup(title: "Language", selection: $language, options: [("System Default", "system"), ("English", "en"), ("简体中文", "zh-CN")])
+                }
+                settingsField("App Center Icon Size") {
+                    HStack(spacing: 12) {
+                        Slider(value: $iconSize, in: AppCenterIconSize.minimum...AppCenterIconSize.maximum, step: AppCenterIconSize.step)
+                            .accessibilityLabel(WebHubLanguage.text("App Center Icon Size"))
+                        Text("\(Int(iconSize)) pt")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(width: 48, alignment: .trailing)
+                    }
                 }
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
@@ -330,10 +356,10 @@ private struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack {
                 Spacer()
-                Button(WebHubLanguage.text("Cancel")) { model.dismissSettings() }.disabled(model.busy)
+                Button(WebHubLanguage.text("Cancel")) { model.cancelSettings() }.disabled(model.busy)
                 Button(WebHubLanguage.text("Confirm")) {
                     model.busy = true
-                    model.saveSettings(["enabled": standalone, "appearance": appearance, "appearanceChanged": appearance != appearanceBaseline, "language": language, "languageChanged": language != languageBaseline, "kind": kind, "host": host.trimmingCharacters(in: .whitespacesAndNewlines), "port": port, "username": username.trimmingCharacters(in: .whitespacesAndNewlines), "password": password, "bypass": bypass.trimmingCharacters(in: .whitespacesAndNewlines)])
+                    model.saveSettings(["enabled": standalone, "appearance": appearance, "appearanceChanged": appearance != appearanceBaseline, "language": language, "languageChanged": language != languageBaseline, "iconSize": Double(iconSize), "kind": kind, "host": host.trimmingCharacters(in: .whitespacesAndNewlines), "port": port, "username": username.trimmingCharacters(in: .whitespacesAndNewlines), "password": password, "bypass": bypass.trimmingCharacters(in: .whitespacesAndNewlines)])
                 }.keyboardShortcut(.defaultAction).disabled(model.busy)
             }
         }
@@ -342,6 +368,9 @@ private struct SettingsView: View {
         .fixedSize(horizontal: false, vertical: true)
         .controlSize(.large)
         .interactiveDismissDisabled(model.busy)
+        .onChange(of: iconSize) { _, value in
+            model.previewIconSize(AppCenterIconSize.normalized(value))
+        }
         .onReceive(NotificationCenter.default.publisher(for: .webHubDisplayPreferencesChanged)) { _ in
             if appearance == appearanceBaseline {
                 appearanceBaseline = WebHubAppearance.preference.rawValue
@@ -350,6 +379,9 @@ private struct SettingsView: View {
             if language == languageBaseline {
                 languageBaseline = WebHubLanguage.languagePreference
                 language = languageBaseline
+            }
+            if iconSize == AppCenterIconSize.preference {
+                iconSize = AppCenterIconSize.preference
             }
         }
     }

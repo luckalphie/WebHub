@@ -59,7 +59,7 @@ Requires macOS 14 or newer and Swift 6 or newer.
 
 `sh scripts/build-app.sh` is the supported way to run WebHub. A plain `swift run` produces a bare executable with no bundle identifier, and WebKit behaves poorly without one — window sizing, cookies, and the shim launch path all assume a real `.app`.
 
-Set `WEBHUB_VERSION=1.2.0` to stamp a different marketing version into the bundle.
+Set `WEBHUB_VERSION=1.2.1` to stamp a different marketing version into the bundle.
 
 To prepare a Sparkle update, build the intended version, then run `sh scripts/prepare-update.sh` on the machine holding the `cn.webhub.updates` Sparkle signing key. Upload the resulting ZIP and `appcast.xml` to the matching GitHub release. The latest release must include both files. Keep the update signing key safe and back it up securely; losing it prevents signing updates for existing installations. Automatic update checks are disabled; users initiate checks from the application menu.
 

@@ -2,26 +2,23 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-final class NativeLauncherModel: ObservableObject {
+final class LauncherModel: ObservableObject {
     @Published var apps: [WebApp] = []
     @Published var icons: [String: NSImage] = [:]
     @Published var running: Set<String> = []
-    @Published var editor: NativeEditorRequest?
-    @Published var settingsShown = false
-    @Published var settingsBusy = false
+    @Published var editor: EditorRequest?
     var action: ([String: Any]) -> Void = { _ in }
     var edit: (String?) -> Void = { _ in }
     var settings: () -> Void = {}
-    var dismissSettings: () -> Void = {}
 }
 
-struct NativeEditorRequest: Identifiable {
+struct EditorRequest: Identifiable {
     let id = UUID()
     let app: WebApp?
 }
 
-struct NativeLauncherView: View {
-    @ObservedObject var model: NativeLauncherModel
+struct LauncherView: View {
+    @ObservedObject var model: LauncherModel
     @Environment(\.colorScheme) private var colorScheme
     @State private var hoveredID: String?
     @State private var draggedID: String?
@@ -59,7 +56,7 @@ struct NativeLauncherView: View {
                 }.padding(8)
             }
         }
-        .sheet(item: $model.editor) { request in NativeAppEditor(model: model, app: request.app) }
+        .sheet(item: $model.editor) { request in AppEditor(model: model, app: request.app) }
         .padding(24)
         .background {
             ZStack {
@@ -109,69 +106,8 @@ struct NativeLauncherView: View {
     }
 }
 
-struct NativeSettingsView: View {
-    @ObservedObject var model: NativeLauncherModel
-    @State private var appearance = WebHubAppearance.preference.rawValue
-    @State private var appearanceBaseline = WebHubAppearance.preference.rawValue
-    @State private var language = WebHubLanguage.languagePreference
-    @State private var languageBaseline = WebHubLanguage.languagePreference
-    @State private var standalone = RunnerPackager.createsStandaloneApps
-    @State private var kind = NetworkProxyStore.shared.profile?.kind.rawValue ?? "system"
-    @State private var host = NetworkProxyStore.shared.profile?.host ?? ""
-    @State private var port = NetworkProxyStore.shared.profile.map { String($0.port) } ?? ""
-    @State private var username = NetworkProxyStore.shared.profile?.username ?? ""
-    @State private var password = ""
-    @State private var bypass = NetworkProxyStore.shared.profile?.bypassDomains.joined(separator: ", ") ?? ""
-    private let hasPassword = NetworkProxyStore.shared.profile?.password != nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(WebHubLanguage.text("Settings")).font(.headline)
-            Form {
-                Picker(WebHubLanguage.text("Appearance"), selection: $appearance) {
-                    Text(WebHubLanguage.text("System Default")).tag("system")
-                    Text(WebHubLanguage.text("Light Mode")).tag("light")
-                    Text(WebHubLanguage.text("Dark Mode")).tag("dark")
-                }
-                Picker(WebHubLanguage.text("Language"), selection: $language) {
-                    Text(WebHubLanguage.text("System Default")).tag("system")
-                    Text("English").tag("en")
-                    Text("简体中文").tag("zh-CN")
-                }
-                Toggle(WebHubLanguage.text("Create Standalone Apps"), isOn: $standalone)
-                Picker(WebHubLanguage.text("Network Proxy"), selection: $kind) {
-                    Text(WebHubLanguage.text("Use System Proxy")).tag("system")
-                    Text("HTTP CONNECT").tag("httpConnect")
-                    Text("SOCKS5").tag("socks5")
-                }
-                if kind != "system" {
-                    TextField(WebHubLanguage.text("Host"), text: $host)
-                    TextField(WebHubLanguage.text("Port"), text: $port)
-                    TextField(WebHubLanguage.text("Proxy Username"), text: $username)
-                    SecureField(WebHubLanguage.text("Proxy Password"), text: $password, prompt: Text(hasPassword ? "********" : ""))
-                    TextField(WebHubLanguage.text("Bypass Domains"), text: $bypass)
-                }
-            }
-            HStack {
-                Spacer()
-                Button(WebHubLanguage.text("Cancel")) { model.dismissSettings() }.disabled(model.settingsBusy)
-                Button(WebHubLanguage.text("Confirm")) {
-                    model.settingsBusy = true
-                    model.action(["type": "saveSettings", "enabled": standalone, "appearance": appearance, "appearanceChanged": appearance != appearanceBaseline, "language": language, "languageChanged": language != languageBaseline, "kind": kind, "host": host.trimmingCharacters(in: .whitespacesAndNewlines), "port": port, "username": username.trimmingCharacters(in: .whitespacesAndNewlines), "password": password, "bypass": bypass.trimmingCharacters(in: .whitespacesAndNewlines)])
-                }.keyboardShortcut(.defaultAction).disabled(model.settingsBusy)
-            }
-        }
-        .padding(24).frame(width: 460)
-        .interactiveDismissDisabled(model.settingsBusy)
-        .onReceive(NotificationCenter.default.publisher(for: .webHubDisplayPreferencesChanged)) { _ in
-            if appearance == appearanceBaseline { appearanceBaseline = WebHubAppearance.preference.rawValue; appearance = appearanceBaseline }
-            if language == languageBaseline { languageBaseline = WebHubLanguage.languagePreference; language = languageBaseline }
-        }
-    }
-}
-
-private struct NativeAppEditor: View {
-    @ObservedObject var model: NativeLauncherModel
+private struct AppEditor: View {
+    @ObservedObject var model: LauncherModel
     let app: WebApp?
     @State private var name: String
     @State private var url: String
@@ -181,7 +117,7 @@ private struct NativeAppEditor: View {
     @State private var iconMode: String
     @State private var accent: String
 
-    init(model: NativeLauncherModel, app: WebApp?) {
+    init(model: LauncherModel, app: WebApp?) {
         self.model = model
         self.app = app
         _name = State(initialValue: app?.name ?? "")

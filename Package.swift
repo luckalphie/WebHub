@@ -17,7 +17,7 @@ let package = Package(
         .executableTarget(
             name: "WebHub",
             dependencies: ["WebHubIPC", .product(name: "Sparkle", package: "Sparkle")],
-            resources: [.copy("Resources/launcher.html"), .copy("Resources/zh-CN.json")]
+            resources: [.copy("Resources/zh-CN.json")]
         ),
         .executableTarget(
             name: "WebHubRunner",

@@ -1,40 +1,24 @@
 import AppKit
-import WebKit
 import SwiftUI
 
 // MARK: - 启动器
 
-final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMessageHandler, NSWindowDelegate {
+final class LauncherWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow!
-    private var webView: WKWebView!
-    private let nativeModel = NativeLauncherModel()
-    private var nativeIconKeys: [String: String] = [:]
-    private var nativeView: NSHostingView<NativeLauncherView>!
-    private var settingsWindow: NSWindow?
-    private var ready = false
-    private var pendingSettings = false
-    private var pendingPayload: String?
+    private let model = LauncherModel()
+    private var iconKeys: [String: String] = [:]
+    private var launcherView: NSHostingView<LauncherView>!
+    private lazy var settingsController = SettingsController(
+        parentWindow: { [weak self] in self?.window },
+        onRefresh: { [weak self] in self?.refresh() }
+    )
     private var changingFullScreen = false
     /// 单宿主下菜单是全局的，站点窗口会挂上自己那份；切回应用中心时要还原
     private var launcherMenu: NSMenu?
-    private var changingStandaloneApps = false
 
     func show() {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
-        config.defaultWebpagePreferences.allowsContentJavaScript = true
-        let translationData = (try? JSONEncoder().encode(WebHubLanguage.translations)) ?? Data("{}".utf8)
-        let translationJSON = String(data: translationData, encoding: .utf8) ?? "{}"
-        config.userContentController.addUserScript(WKUserScript(source: "window.webHubChinese = \(WebHubLanguage.isChinese ? "true" : "false"); window.webHubTranslations = \(translationJSON);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        config.userContentController.add(self, name: "hub")
-        webView = WKWebView(frame: .zero, configuration: config)
-        webView.customUserAgent = SafariUserAgent.value
-        webView.navigationDelegate = self
-        webView.setValue(false, forKey: "drawsBackground")
-        webView.allowsMagnification = false
         // 保留系统标准标题栏：既能显示标题，也提供可靠的窗口拖动区域。
-        // 不用 fullSizeContentView —— WKWebView 会吞掉拖拽事件，
-        // isMovableByWindowBackground 和 CSS 的 -webkit-app-region 在 WKWebView 里都无效。
+        // 标题栏同时承担窗口拖动和标题展示，内容区全部交给原生 SwiftUI 视图。
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -52,20 +36,18 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         window.center()
         restoreWindowFrame()
         window.delegate = self
-        nativeModel.action = { [weak self] in self?.handleLauncherAction($0) }
-        nativeModel.edit = { [weak self] in self?.showEditor(id: $0) }
-        nativeModel.settings = { [weak self] in self?.showSettings() }
-        nativeModel.dismissSettings = { [weak self] in self?.dismissSettings() }
-        nativeView = NSHostingView(rootView: NativeLauncherView(model: nativeModel))
-        window.contentView = webView
+        model.action = { [weak self] in self?.handleLauncherAction($0) }
+        model.edit = { [weak self] in self?.showEditor(id: $0) }
+        model.settings = { [weak self] in self?.showSettings() }
+        launcherView = NSHostingView(rootView: LauncherView(model: model))
+        window.contentView = launcherView
         window.makeKeyAndOrderFront(nil)
-        if let html = LauncherWindowController.htmlURL() {
-            webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
-        }
+        refresh()
+        refreshRunning()
 
         buildMenu()
         if !RunnerPackager.hasStandalonePreference {
-            DispatchQueue.main.async { [weak self] in self?.disableStandaloneApps { _ in } }
+            DispatchQueue.main.async { [weak self] in self?.settingsController.disableStandaloneAppsIfNeeded() }
         }
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
                                                name: NSApplication.didBecomeActiveNotification, object: nil)
@@ -87,47 +69,18 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
     func showSettings() {
         reveal()
-        guard ready else { pendingSettings = true; return }
-        guard settingsWindow == nil else { settingsWindow?.makeKeyAndOrderFront(nil); return }
-        nativeModel.settingsShown = true
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 500, height: 620), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        panel.title = WebHubLanguage.text("Settings")
-        panel.isReleasedWhenClosed = false
-        panel.delegate = self
-        panel.contentView = NSHostingView(rootView: NativeSettingsView(model: nativeModel))
-        let parentFrame = window.frame
-        let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? parentFrame
-        let originX = min(max(parentFrame.midX - panel.frame.width / 2, visibleFrame.minX), visibleFrame.maxX - panel.frame.width)
-        let originY = min(max(parentFrame.midY - panel.frame.height / 2, visibleFrame.minY), visibleFrame.maxY - panel.frame.height)
-        panel.setFrameOrigin(NSPoint(x: originX, y: originY))
-        settingsWindow = panel
-        panel.makeKeyAndOrderFront(nil)
-        // 等 SwiftUI 的按钮事件返回后再进入 AppKit 模态循环，避免重入阻塞后续按钮事件。
-        DispatchQueue.main.async { [weak self, weak panel] in
-            guard let self, let panel, self.settingsWindow === panel else { return }
-            NSApp.runModal(for: panel)
-            panel.orderOut(nil)
-            self.settingsWindow = nil
-            self.nativeModel.settingsShown = false
-        }
-    }
-
-    private func dismissSettings() {
-        guard let panel = settingsWindow, !nativeModel.settingsBusy, NSApp.modalWindow === panel else { return }
-        NSApp.stopModal()
+        settingsController.show()
     }
 
     private func showEditor(id: String?) {
-        guard ready else { return }
-        nativeModel.editor = NativeEditorRequest(app: id.flatMap { identifier in AppStore.shared.apps.first { $0.id == identifier } })
+        model.editor = EditorRequest(app: id.flatMap { identifier in AppStore.shared.apps.first { $0.id == identifier } })
     }
 
     /// 关红叉只是收起窗口，进程留在后台 —— 和 Chrome 一致。
     /// 站点窗口还开着时更不能因为「应用中心关了」而影响它们。
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if sender === settingsWindow {
-            dismissSettings()
-            return false
+        if settingsController.owns(sender) {
+            return settingsController.windowShouldClose(sender)
         }
         saveWindowFrame()
         sender.orderOut(nil)
@@ -168,52 +121,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         saveWindowFrame()
     }
 
-    private static func htmlURL() -> URL? {
-        // 打包成 .app 后由 scripts/build-app.sh 放进 Contents/Resources；
-        // 直接 `swift run` 时它在 SwiftPM 生成的资源 bundle 里。
-        if let res = Bundle.main.resourceURL?.appendingPathComponent("launcher.html"),
-           FileManager.default.fileExists(atPath: res.path) {
-            return res
-        }
-        return Bundle.module.url(forResource: "launcher.html", withExtension: nil)
-    }
-
-    // MARK: 数据推送
-
-    private func payload() -> String {
-        let store = AppStore.shared
-        var items: [[String: Any]] = []
-        for app in store.apps {
-            var item: [String: Any] = ["id": app.id, "name": app.name,
-                                       "url": app.url, "accent": app.accent,
-                                       "iconMode": app.effectiveIconMode.rawValue,
-                                       "isolatedLogin": app.usesIsolatedLogin,
-                                       "supportedDomains": app.supportedDomains?.joined(separator: ", ") ?? "",
-                                       "iconURL": app.iconURL ?? ""]
-            if app.effectiveIconMode == .website, let iconURL = store.iconURL(for: app) {
-                // 用 data URI 避免 file:// 权限问题
-                if let data = try? Data(contentsOf: iconURL) {
-                    // 与 Dock 图标一样裁掉透明留白，再按磁贴的 Retina 尺寸生成预览。
-                    let preview = NSImage(data: data)
-                        .flatMap { IconBuilder.squareGlyph(glyph: $0, box: 160) }
-                        .flatMap { $0.tiffRepresentation }
-                        .flatMap { NSBitmapImageRep(data: $0) }
-                        .flatMap { $0.representation(using: .png, properties: [:]) } ?? data
-                    item["icon"] = "data:image/png;base64," + preview.base64EncodedString()
-                }
-            }
-            items.append(item)
-        }
-        let profile = NetworkProxyStore.shared.profile
-        let proxy: [String: Any] = ["kind": profile?.kind.rawValue ?? "system", "host": profile?.host ?? "", "port": profile.map { String($0.port) } ?? "", "bypass": profile?.bypassDomains.joined(separator: ", ") ?? "", "username": profile?.username ?? "", "hasPassword": profile?.password != nil]
-        let obj: [String: Any] = ["apps": items, "running": RunningApps.shared.ids(), "proxy": proxy, "appearance": WebHubAppearance.preference.rawValue, "language": WebHubLanguage.languagePreference]
-        guard let data = try? JSONSerialization.data(withJSONObject: obj),
-              let str = String(data: data, encoding: .utf8) else { return "{\"apps\":[],\"running\":[]}" }
-        return str
-    }
+    // MARK: 数据刷新
 
     @objc func refresh() {
-        guard ready else { return }
         let apps = AppStore.shared.apps
         var iconKeys: [String: String] = [:]
         var icons: [String: NSImage] = [:]
@@ -223,7 +133,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate ?? 0
             let key = "\(app.name)|\(app.accent)|\(app.effectiveIconMode.rawValue)|\(iconURL?.path ?? "")|\(modified)"
             iconKeys[app.id] = key
-            if nativeIconKeys[app.id] == key, let icon = nativeModel.icons[app.id] {
+            if iconKeys[app.id] == key, let icon = model.icons[app.id] {
                 icons[app.id] = icon
                 continue
             }
@@ -232,45 +142,13 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
                 ?? IconBuilder.nameIcon(name: app.name, accent: app.accent, size: 160)
             icons[app.id] = imageData.flatMap { NSImage(data: $0) }
         }
-        nativeIconKeys = iconKeys
-        nativeModel.icons = icons
-        nativeModel.apps = apps
-        let json = payload()
-        eval("window.hubRender(\(jsString(json)))")
+        self.iconKeys = iconKeys
+        model.icons = icons
+        model.apps = apps
     }
 
     @objc private func refreshRunning() {
-        guard ready else { return }
-        nativeModel.running = Set(RunningApps.shared.ids())
-        let ids = (try? JSONSerialization.data(withJSONObject: RunningApps.shared.ids()))
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-        eval("window.hubSetRunning(\(jsString(ids)))")
-    }
-
-    private func eval(_ js: String) {
-        webView.evaluateJavaScript(js, completionHandler: nil)
-    }
-
-    // MARK: WKNavigationDelegate
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        ready = true
-        refresh()
-        refreshRunning()
-        updateStandaloneControl()
-        if pendingSettings {
-            pendingSettings = false
-            DispatchQueue.main.async { [weak self] in self?.showSettings() }
-        }
-        window.contentView = nativeView
-    }
-
-    // MARK: 消息桥
-
-    func userContentController(_ userContentController: WKUserContentController,
-                               didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any] else { return }
-        handleLauncherAction(body)
+        model.running = Set(RunningApps.shared.ids())
     }
 
     private func handleLauncherAction(_ body: [String: Any]) {
@@ -278,13 +156,6 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         let store = AppStore.shared
 
         switch type {
-        case "returnNative":
-            window.contentView = nativeView
-            refresh()
-
-        case "saveSettings":
-            saveSettings(body)
-
         case "open":
             guard let id = body["id"] as? String,
                   let app = store.apps.first(where: { $0.id == id }) else { return }
@@ -371,72 +242,6 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     }
 
     // MARK: 登录态
-
-    private func saveSettings(_ body: [String: Any]) {
-        guard let kind = body["kind"] as? String, let enabled = body["enabled"] as? Bool,
-              let appearanceValue = body["appearance"] as? String, let appearance = WebHubAppearance(rawValue: appearanceValue),
-              let language = body["language"] as? String, ["system", "en", "zh-CN"].contains(language) else {
-            nativeModel.settingsBusy = false
-            return
-        }
-        let profile: NetworkProxyProfile?
-        if kind == "system" {
-            profile = nil
-        } else {
-            let username = (body["username"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let enteredPassword = body["password"] as? String ?? ""
-            guard !username.isEmpty || enteredPassword.isEmpty else {
-                settingsFailed("Enter a proxy username.")
-                return
-            }
-            let previous = NetworkProxyStore.shared.profile
-            let host = body["host"] as? String ?? ""
-            let portText = body["port"] as? String ?? ""
-            let canReusePassword = previous?.kind.rawValue == kind && previous?.host == host.trimmingCharacters(in: .whitespacesAndNewlines) && previous.map { String($0.port) } == portText && previous?.username == username
-            let password = username.isEmpty ? nil : (enteredPassword.isEmpty && canReusePassword ? previous?.password : enteredPassword)
-            guard username.isEmpty || !(password ?? "").isEmpty else {
-                settingsFailed("Enter a proxy password.")
-                return
-            }
-            guard let type = NetworkProxyProfile.Kind(rawValue: kind),
-                  let port = UInt16(portText),
-                  let value = NetworkProxyProfile(name: "Global", kind: type, host: host, port: port, bypassDomains: body["bypass"] as? String ?? "", username: username, password: password) else {
-                settingsFailed("Enter a valid host and port from 1 to 65535.")
-                return
-            }
-            profile = value
-        }
-        setStandaloneApps(enabled) { [weak self] success in
-            guard let self else { return }
-            guard success else { self.nativeModel.settingsBusy = false; return }
-            do {
-                try NetworkProxyStore.shared.save(profile)
-                SiteWindowManager.shared.refreshNetworkProxy()
-                let languageChanged = (body["languageChanged"] as? Bool == true) && language != WebHubLanguage.languagePreference
-                if body["appearanceChanged"] as? Bool == true { WebHubAppearance.select(appearance) }
-                if languageChanged { UserDefaults.standard.set(language, forKey: "WebHub.language") }
-                self.refresh()
-                self.nativeModel.settingsBusy = false
-                self.dismissSettings()
-                if languageChanged {
-                    let alert = NSAlert()
-                    alert.messageText = WebHubLanguage.text("Language changed")
-                    alert.informativeText = WebHubLanguage.text("Restart WebHub to apply the language change to all windows.")
-                    alert.addButton(withTitle: WebHubLanguage.text("OK"))
-                    alert.runModal()
-                }
-            } catch {
-                self.settingsFailed("Unable to save proxy settings.")
-            }
-        }
-    }
-
-    private func settingsFailed(_ message: String) {
-        nativeModel.settingsBusy = false
-        let alert = NSAlert()
-        alert.messageText = WebHubLanguage.text(message)
-        alert.runModal()
-    }
 
     /// 清除某站点的登录态（cookie/localStorage）与已保存密码
     private func clearLoginState(for app: WebApp) {
@@ -571,136 +376,9 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         WindowHelpMenus.shared.activate(m)
     }
 
-    private func setStandaloneApps(_ enabled: Bool, completion: @escaping (Bool) -> Void) {
-        guard !changingStandaloneApps else { updateStandaloneControl(); completion(false); return }
-        guard enabled != RunnerPackager.createsStandaloneApps else { updateStandaloneControl(); completion(true); return }
-        if !enabled {
-            disableStandaloneApps(completion: completion)
-        } else {
-            RunnerPackager.createsStandaloneApps = true
-            updateStandaloneControl()
-            createStandaloneApps(AppStore.shared.apps)
-            completion(true)
-        }
-    }
-
-    private func updateStandaloneControl() {
-        guard ready else { return }
-        eval("window.hubSetStandaloneApps(\(RunnerPackager.createsStandaloneApps), \(changingStandaloneApps))")
-    }
-
-    private func createStandaloneApps(_ apps: [WebApp], index: Int = 0) {
-        guard RunnerPackager.createsStandaloneApps, !changingStandaloneApps, index < apps.count else { return }
-        guard let current = AppStore.shared.apps.first(where: { $0.id == apps[index].id }) else {
-            createStandaloneApps(apps, index: index + 1)
-            return
-        }
-        if RunnerPackager.ensureApp(for: current, iconPNG: nil) == nil {
-            let alert = NSAlert()
-            alert.messageText = WebHubLanguage.format("Unable to create standalone app for %@", current.name)
-            alert.runModal()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.createStandaloneApps(apps, index: index + 1)
-        }
-    }
-
-    private func disableStandaloneApps(completion: @escaping (Bool) -> Void) {
-        guard !changingStandaloneApps else { completion(false); return }
-        let bundles: [URL]
-        do { bundles = try RunnerPackager.standaloneBundles() }
-        catch {
-            RunnerPackager.createsStandaloneApps = true
-            updateStandaloneControl()
-            showStandaloneError(error)
-            completion(false)
-            return
-        }
-        let paths = Set(bundles.map { $0.resolvingSymlinksInPath().path })
-        let running = NSWorkspace.shared.runningApplications.filter {
-            guard let url = $0.bundleURL else { return false }
-            return paths.contains(url.resolvingSymlinksInPath().path) && !$0.isTerminated
-        }
-        if !running.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = WebHubLanguage.text("Quit running standalone apps?")
-            alert.informativeText = WebHubLanguage.text("Running site windows will close and their standalone apps will be removed. Site data will be kept.")
-            alert.addButton(withTitle: WebHubLanguage.text("Quit and Remove"))
-            alert.addButton(withTitle: WebHubLanguage.text("Cancel"))
-            guard alert.runModal() == .alertFirstButtonReturn else {
-                RunnerPackager.createsStandaloneApps = true
-                updateStandaloneControl()
-                completion(false)
-                return
-            }
-        }
-        changingStandaloneApps = true
-        RunnerPackager.isChangingStandaloneApps = true
-        updateStandaloneControl()
-        for process in running {
-            let runner = process.bundleURL.flatMap { RunnerPackager.appID(in: $0) }.flatMap { RunnerProcess(application: process, appID: $0) }
-            if let url = process.bundleURL, let id = RunnerPackager.appID(in: url), SiteWindowManager.shared.openSiteIDs.contains(id) {
-                SiteWindowManager.shared.close(id)
-            }
-            runner?.requestTermination()
-        }
-        finishDisablingStandaloneApps(bundles, running: running, deadline: Date().addingTimeInterval(5), completion: completion)
-    }
-
-    private func finishDisablingStandaloneApps(_ bundles: [URL], running: [NSRunningApplication], deadline: Date, completion: @escaping (Bool) -> Void) {
-        if running.contains(where: { !$0.isTerminated }) {
-            if Date() < deadline {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                    self?.finishDisablingStandaloneApps(bundles, running: running, deadline: deadline, completion: completion)
-                }
-                return
-            }
-            changingStandaloneApps = false
-            RunnerPackager.isChangingStandaloneApps = false
-            RunnerPackager.createsStandaloneApps = true
-            updateStandaloneControl()
-            let alert = NSAlert()
-            alert.messageText = WebHubLanguage.text("Some standalone apps did not quit")
-            alert.informativeText = WebHubLanguage.text("No standalone apps were removed. Close them and try again.")
-            alert.runModal()
-            completion(false)
-            return
-        }
-        do {
-            try RunnerPackager.deleteStandaloneBundles(bundles)
-            RunnerPackager.createsStandaloneApps = false
-        } catch {
-            RunnerPackager.createsStandaloneApps = true
-            showStandaloneError(error)
-        }
-        changingStandaloneApps = false
-        RunnerPackager.isChangingStandaloneApps = false
-        updateStandaloneControl()
-        completion(!RunnerPackager.createsStandaloneApps)
-    }
-
-    private func showStandaloneError(_ error: Error) {
-        let alert = NSAlert(error: error)
-        alert.messageText = WebHubLanguage.text("Unable to remove standalone apps")
-        alert.runModal()
-    }
-
     @objc private func addApp() {
         showEditor(id: nil)
     }
-}
-
-// MARK: - 工具
-
-/// 把 Swift 字符串转成安全的 JS 字面量
-func jsString(_ s: String) -> String {
-    guard let data = try? JSONSerialization.data(withJSONObject: [s]),
-          let json = String(data: data, encoding: .utf8) else { return "\"\"" }
-    // json 形如 ["..."]，去掉外层方括号
-    var inner = json
-    if inner.hasPrefix("[") { inner.removeFirst() }
-    if inner.hasSuffix("]") { inner.removeLast() }
-    return inner
 }
 
 // MARK: - 运行中应用追踪

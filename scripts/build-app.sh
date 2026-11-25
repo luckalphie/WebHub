@@ -44,7 +44,6 @@ echo "==> 组装资源"
 cp "$BIN_DIR/WebHub" "$CONTENTS/MacOS/WebHub"
 chmod +x "$CONTENTS/MacOS/WebHub"
 xcrun install_name_tool -add_rpath '@executable_path/../Frameworks' "$CONTENTS/MacOS/WebHub"
-cp "$ROOT/Sources/WebHub/Resources/launcher.html" "$CONTENTS/Resources/launcher.html"
 cp "$ROOT/Sources/WebHub/Resources/zh-CN.json" "$CONTENTS/Resources/zh-CN.json"
 # Let macOS discover the app's supported languages through standard bundle resources.
 mkdir -p "$CONTENTS/Resources/en.lproj" "$CONTENTS/Resources/zh-Hans.lproj"

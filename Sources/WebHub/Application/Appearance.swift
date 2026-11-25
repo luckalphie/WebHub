@@ -20,6 +20,7 @@ enum WebHubAppearance: String {
     static func select(_ appearance: WebHubAppearance) {
         UserDefaults.standard.set(appearance.rawValue, forKey: preferenceKey)
         apply(appearance)
+        NotificationCenter.default.post(name: .webHubDisplayPreferencesChanged, object: nil)
     }
 }
 

@@ -306,6 +306,8 @@
 <div class="sheet-mask" id="settingsMask">
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <div class="settings-heading"><h2 id="settingsTitle">Settings</h2><button type="button" class="settings-close" id="closeSettings" aria-label="Close">&times;</button></div>
+    <div class="field"><label for="appearanceSetting">Appearance</label><select id="appearanceSetting"><option value="system">System Default</option><option value="light">Light Mode</option><option value="dark">Dark Mode</option></select></div>
+    <div class="field"><label for="languageSetting">Language</label><select id="languageSetting"><option value="system">System Default</option><option value="en">English</option><option value="zh-CN">简体中文</option></select></div>
     <div class="field">
       <div class="login-setting-row">
         <span class="login-setting-title" id="standaloneLabel">Create Standalone Apps</span>
@@ -423,6 +425,8 @@ const empty = document.getElementById('empty');
 const menu = document.getElementById('menu');
 const mask = document.getElementById('mask');
 const settingsMask = document.getElementById('settingsMask');
+const appearanceSetting = document.getElementById('appearanceSetting');
+const languageSetting = document.getElementById('languageSetting');
 const standaloneApps = document.getElementById('standaloneApps');
 const globalProxyKind = document.getElementById('globalProxyKind');
 const globalProxyHost = document.getElementById('globalProxyHost');
@@ -434,6 +438,8 @@ const globalProxyFields = document.getElementById('globalProxyFields');
 const confirmSettings = document.getElementById('confirmSettings');
 let savedStandaloneApps = false;
 let settingsBusy = false;
+let appearanceBaseline = 'system';
+let languageBaseline = 'system';
 document.getElementById('closeSettings').setAttribute('aria-label', tr('Close'));
 function showProxySettings() {
   const proxy = state.proxy || {};
@@ -451,12 +457,12 @@ confirmSettings.addEventListener('click', () => {
   if (settingsBusy) return;
   settingsBusy = true;
   confirmSettings.disabled = true;
-  post('saveSettings', { enabled: standaloneApps.checked, kind: globalProxyKind.value, host: globalProxyHost.value.trim(), port: globalProxyPort.value, bypass: globalProxyBypass.value.trim(), username: globalProxyUsername.value.trim(), password: globalProxyPassword.value });
+  post('saveSettings', { enabled: standaloneApps.checked, appearance: appearanceSetting.value, appearanceChanged: appearanceSetting.value !== appearanceBaseline, language: languageSetting.value, languageChanged: languageSetting.value !== languageBaseline, kind: globalProxyKind.value, host: globalProxyHost.value.trim(), port: globalProxyPort.value, bypass: globalProxyBypass.value.trim(), username: globalProxyUsername.value.trim(), password: globalProxyPassword.value });
 });
-function closeSettings() { if (!settingsBusy) { globalProxyPassword.value = ''; settingsMask.classList.remove('show'); } }
+function closeSettings() { if (!settingsBusy && settingsMask.classList.contains('show')) { globalProxyPassword.value = ''; settingsMask.classList.remove('show'); post('returnNative'); } }
 window.hubOpenSettings = function () {
   if (settingsMask.classList.contains('show')) return;
-  standaloneApps.checked = savedStandaloneApps; showProxySettings(); settingsMask.classList.add('show');
+  standaloneApps.checked = savedStandaloneApps; appearanceBaseline = state.appearance || 'system'; languageBaseline = state.language || 'system'; appearanceSetting.value = appearanceBaseline; languageSetting.value = languageBaseline; showProxySettings(); settingsMask.classList.add('show');
 };
 document.getElementById('settingsButton').addEventListener('click', window.hubOpenSettings);
 document.getElementById('cancelSettings').addEventListener('click', closeSettings);
@@ -644,7 +650,7 @@ function openSheet(id) {
   setTimeout(() => (app ? fName : fName).focus(), 60);
 }
 
-function closeSheet() { mask.classList.remove('show'); editingId = null; }
+function closeSheet() { if (mask.classList.contains('show')) { mask.classList.remove('show'); editingId = null; post('returnNative'); } }
 
 btnCancel.addEventListener('click', closeSheet);
 mask.addEventListener('click', (e) => { if (e.target === mask) closeSheet(); });
@@ -687,6 +693,10 @@ window.hubRender = function (json) {
   try {
     state = typeof json === 'string' ? JSON.parse(json) : json;
   } catch (_) { return; }
+  if (settingsMask.classList.contains('show') && !settingsBusy) {
+    if (appearanceSetting.value === appearanceBaseline) { appearanceBaseline = state.appearance || 'system'; appearanceSetting.value = appearanceBaseline; }
+    if (languageSetting.value === languageBaseline) { languageBaseline = state.language || 'system'; languageSetting.value = languageBaseline; }
+  }
   render();
 };
 window.hubSetRunning = function (listJSON) {

@@ -1,11 +1,16 @@
 import AppKit
 import WebKit
+import SwiftUI
 
 // MARK: - 启动器
 
 final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMessageHandler, NSWindowDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
+    private let nativeModel = NativeLauncherModel()
+    private var nativeIconKeys: [String: String] = [:]
+    private var nativeView: NSHostingView<NativeLauncherView>!
+    private var settingsWindow: NSWindow?
     private var ready = false
     private var pendingSettings = false
     private var pendingPayload: String?
@@ -22,13 +27,11 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         let translationJSON = String(data: translationData, encoding: .utf8) ?? "{}"
         config.userContentController.addUserScript(WKUserScript(source: "window.webHubChinese = \(WebHubLanguage.isChinese ? "true" : "false"); window.webHubTranslations = \(translationJSON);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController.add(self, name: "hub")
-
         webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = SafariUserAgent.value
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
         webView.allowsMagnification = false
-
         // 保留系统标准标题栏：既能显示标题，也提供可靠的窗口拖动区域。
         // 不用 fullSizeContentView —— WKWebView 会吞掉拖拽事件，
         // isMovableByWindowBackground 和 CSS 的 -webkit-app-region 在 WKWebView 里都无效。
@@ -37,6 +40,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
+        window.tabbingMode = .disallowed
         window.title = "WebHub"
         // ARC 下必须为 false：否则 close 后系统会 release 掉，controller 里的引用变野指针
         window.isReleasedWhenClosed = false
@@ -48,9 +52,13 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         window.center()
         restoreWindowFrame()
         window.delegate = self
+        nativeModel.action = { [weak self] in self?.handleLauncherAction($0) }
+        nativeModel.edit = { [weak self] in self?.showEditor(id: $0) }
+        nativeModel.settings = { [weak self] in self?.showSettings() }
+        nativeModel.dismissSettings = { [weak self] in self?.dismissSettings() }
+        nativeView = NSHostingView(rootView: NativeLauncherView(model: nativeModel))
         window.contentView = webView
         window.makeKeyAndOrderFront(nil)
-
         if let html = LauncherWindowController.htmlURL() {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         }
@@ -59,11 +67,11 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         if !RunnerPackager.hasStandalonePreference {
             DispatchQueue.main.async { [weak self] in self?.disableStandaloneApps { _ in } }
         }
-        installPasteShortcut()
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
                                                name: NSApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRunning),
                                                name: SiteWindowManager.runningSitesDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: .webHubDisplayPreferencesChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(saveWindowFrameOnExit),
                                                name: NSApplication.willTerminateNotification, object: nil)
     }
@@ -80,12 +88,47 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     func showSettings() {
         reveal()
         guard ready else { pendingSettings = true; return }
-        eval("window.hubOpenSettings()")
+        guard settingsWindow == nil else { settingsWindow?.makeKeyAndOrderFront(nil); return }
+        nativeModel.settingsShown = true
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 500, height: 620), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        panel.title = WebHubLanguage.text("Settings")
+        panel.isReleasedWhenClosed = false
+        panel.delegate = self
+        panel.contentView = NSHostingView(rootView: NativeSettingsView(model: nativeModel))
+        let parentFrame = window.frame
+        let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? parentFrame
+        let originX = min(max(parentFrame.midX - panel.frame.width / 2, visibleFrame.minX), visibleFrame.maxX - panel.frame.width)
+        let originY = min(max(parentFrame.midY - panel.frame.height / 2, visibleFrame.minY), visibleFrame.maxY - panel.frame.height)
+        panel.setFrameOrigin(NSPoint(x: originX, y: originY))
+        settingsWindow = panel
+        panel.makeKeyAndOrderFront(nil)
+        // 等 SwiftUI 的按钮事件返回后再进入 AppKit 模态循环，避免重入阻塞后续按钮事件。
+        DispatchQueue.main.async { [weak self, weak panel] in
+            guard let self, let panel, self.settingsWindow === panel else { return }
+            NSApp.runModal(for: panel)
+            panel.orderOut(nil)
+            self.settingsWindow = nil
+            self.nativeModel.settingsShown = false
+        }
+    }
+
+    private func dismissSettings() {
+        guard let panel = settingsWindow, !nativeModel.settingsBusy, NSApp.modalWindow === panel else { return }
+        NSApp.stopModal()
+    }
+
+    private func showEditor(id: String?) {
+        guard ready else { return }
+        nativeModel.editor = NativeEditorRequest(app: id.flatMap { identifier in AppStore.shared.apps.first { $0.id == identifier } })
     }
 
     /// 关红叉只是收起窗口，进程留在后台 —— 和 Chrome 一致。
     /// 站点窗口还开着时更不能因为「应用中心关了」而影响它们。
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if sender === settingsWindow {
+            dismissSettings()
+            return false
+        }
         saveWindowFrame()
         sender.orderOut(nil)
         return false
@@ -163,7 +206,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         }
         let profile = NetworkProxyStore.shared.profile
         let proxy: [String: Any] = ["kind": profile?.kind.rawValue ?? "system", "host": profile?.host ?? "", "port": profile.map { String($0.port) } ?? "", "bypass": profile?.bypassDomains.joined(separator: ", ") ?? "", "username": profile?.username ?? "", "hasPassword": profile?.password != nil]
-        let obj: [String: Any] = ["apps": items, "running": RunningApps.shared.ids(), "proxy": proxy]
+        let obj: [String: Any] = ["apps": items, "running": RunningApps.shared.ids(), "proxy": proxy, "appearance": WebHubAppearance.preference.rawValue, "language": WebHubLanguage.languagePreference]
         guard let data = try? JSONSerialization.data(withJSONObject: obj),
               let str = String(data: data, encoding: .utf8) else { return "{\"apps\":[],\"running\":[]}" }
         return str
@@ -171,12 +214,34 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
 
     @objc func refresh() {
         guard ready else { return }
+        let apps = AppStore.shared.apps
+        var iconKeys: [String: String] = [:]
+        var icons: [String: NSImage] = [:]
+        for app in apps {
+            let iconURL = AppStore.shared.iconURL(for: app)
+            let attributes = iconURL.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path) }
+            let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate ?? 0
+            let key = "\(app.name)|\(app.accent)|\(app.effectiveIconMode.rawValue)|\(iconURL?.path ?? "")|\(modified)"
+            iconKeys[app.id] = key
+            if nativeIconKeys[app.id] == key, let icon = nativeModel.icons[app.id] {
+                icons[app.id] = icon
+                continue
+            }
+            let glyph = iconURL.flatMap { NSImage(contentsOf: $0) }
+            let imageData = (app.effectiveIconMode == .website ? glyph.flatMap { IconBuilder.composeIcon(glyph: $0, accent: app.accent, size: 160) } : nil)
+                ?? IconBuilder.nameIcon(name: app.name, accent: app.accent, size: 160)
+            icons[app.id] = imageData.flatMap { NSImage(data: $0) }
+        }
+        nativeIconKeys = iconKeys
+        nativeModel.icons = icons
+        nativeModel.apps = apps
         let json = payload()
         eval("window.hubRender(\(jsString(json)))")
     }
 
     @objc private func refreshRunning() {
         guard ready else { return }
+        nativeModel.running = Set(RunningApps.shared.ids())
         let ids = (try? JSONSerialization.data(withJSONObject: RunningApps.shared.ids()))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         eval("window.hubSetRunning(\(jsString(ids)))")
@@ -195,19 +260,28 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         updateStandaloneControl()
         if pendingSettings {
             pendingSettings = false
-            eval("window.hubOpenSettings()")
+            DispatchQueue.main.async { [weak self] in self?.showSettings() }
         }
+        window.contentView = nativeView
     }
 
     // MARK: 消息桥
 
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any],
-              let type = body["type"] as? String else { return }
+        guard let body = message.body as? [String: Any] else { return }
+        handleLauncherAction(body)
+    }
+
+    private func handleLauncherAction(_ body: [String: Any]) {
+        guard let type = body["type"] as? String else { return }
         let store = AppStore.shared
 
         switch type {
+        case "returnNative":
+            window.contentView = nativeView
+            refresh()
+
         case "saveSettings":
             saveSettings(body)
 
@@ -299,8 +373,10 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     // MARK: 登录态
 
     private func saveSettings(_ body: [String: Any]) {
-        guard let kind = body["kind"] as? String, let enabled = body["enabled"] as? Bool else {
-            eval("window.hubSettingsSaved(false)")
+        guard let kind = body["kind"] as? String, let enabled = body["enabled"] as? Bool,
+              let appearanceValue = body["appearance"] as? String, let appearance = WebHubAppearance(rawValue: appearanceValue),
+              let language = body["language"] as? String, ["system", "en", "zh-CN"].contains(language) else {
+            nativeModel.settingsBusy = false
             return
         }
         let profile: NetworkProxyProfile?
@@ -310,8 +386,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             let username = (body["username"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let enteredPassword = body["password"] as? String ?? ""
             guard !username.isEmpty || enteredPassword.isEmpty else {
-                eval("window.hubToast(\(jsString(WebHubLanguage.text("Enter a proxy username."))))")
-                eval("window.hubSettingsSaved(false)")
+                settingsFailed("Enter a proxy username.")
                 return
             }
             let previous = NetworkProxyStore.shared.profile
@@ -320,33 +395,47 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
             let canReusePassword = previous?.kind.rawValue == kind && previous?.host == host.trimmingCharacters(in: .whitespacesAndNewlines) && previous.map { String($0.port) } == portText && previous?.username == username
             let password = username.isEmpty ? nil : (enteredPassword.isEmpty && canReusePassword ? previous?.password : enteredPassword)
             guard username.isEmpty || !(password ?? "").isEmpty else {
-                eval("window.hubToast(\(jsString(WebHubLanguage.text("Enter a proxy password."))))")
-                eval("window.hubSettingsSaved(false)")
+                settingsFailed("Enter a proxy password.")
                 return
             }
             guard let type = NetworkProxyProfile.Kind(rawValue: kind),
                   let port = UInt16(portText),
                   let value = NetworkProxyProfile(name: "Global", kind: type, host: host, port: port, bypassDomains: body["bypass"] as? String ?? "", username: username, password: password) else {
-                eval("window.hubToast(\(jsString(WebHubLanguage.text("Enter a valid host and port from 1 to 65535."))))")
-                eval("window.hubSettingsSaved(false)")
+                settingsFailed("Enter a valid host and port from 1 to 65535.")
                 return
             }
             profile = value
         }
         setStandaloneApps(enabled) { [weak self] success in
             guard let self else { return }
-            guard success else { self.eval("window.hubSettingsSaved(false)"); return }
+            guard success else { self.nativeModel.settingsBusy = false; return }
             do {
                 try NetworkProxyStore.shared.save(profile)
                 SiteWindowManager.shared.refreshNetworkProxy()
+                let languageChanged = (body["languageChanged"] as? Bool == true) && language != WebHubLanguage.languagePreference
+                if body["appearanceChanged"] as? Bool == true { WebHubAppearance.select(appearance) }
+                if languageChanged { UserDefaults.standard.set(language, forKey: "WebHub.language") }
                 self.refresh()
-                self.eval("window.hubSettingsSaved(true)")
-                self.eval("window.hubToast(\(jsString(WebHubLanguage.text("Proxy settings saved."))))")
+                self.nativeModel.settingsBusy = false
+                self.dismissSettings()
+                if languageChanged {
+                    let alert = NSAlert()
+                    alert.messageText = WebHubLanguage.text("Language changed")
+                    alert.informativeText = WebHubLanguage.text("Restart WebHub to apply the language change to all windows.")
+                    alert.addButton(withTitle: WebHubLanguage.text("OK"))
+                    alert.runModal()
+                }
             } catch {
-                self.eval("window.hubSettingsSaved(false)")
-                self.eval("window.hubToast(\(jsString(WebHubLanguage.text("Unable to save proxy settings."))))")
+                self.settingsFailed("Unable to save proxy settings.")
             }
         }
+    }
+
+    private func settingsFailed(_ message: String) {
+        nativeModel.settingsBusy = false
+        let alert = NSAlert()
+        alert.messageText = WebHubLanguage.text(message)
+        alert.runModal()
     }
 
     /// 清除某站点的登录态（cookie/localStorage）与已保存密码
@@ -368,7 +457,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         // 单宿主：所有窗口共用同一个数据仓库，直接清一次就全都没了，
         // 不需要再往共享池写墓碑通知「其它进程」。
         SharedStorage.clear(for: app) { [weak self] in
-            self?.eval("window.hubToast(\(jsString(WebHubLanguage.format("Sign-in data cleared for %@", root))))")
+            self?.showMessage(WebHubLanguage.format("Sign-in data cleared for %@", root))
         }
     }
 
@@ -395,7 +484,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
                     _ = RunnerPackager.ensureApp(for: updated, iconPNG: nil)
                 }
                 self.refresh()
-                if announce { self.eval("window.hubToast(\(jsString(WebHubLanguage.text("Could not fetch the website icon; using a name icon."))))") }
+                if announce { self.showMessage(WebHubLanguage.text("Could not fetch the website icon; using a name icon.")) }
             }
         }
         if let iconURL = app.iconURL, !iconURL.isEmpty {
@@ -405,45 +494,10 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         }
     }
 
-    // MARK: 剪贴板
-
-    /// 手写 NSApplication 缺完整「编辑」菜单，WKWebView 输入框收不到 Cmd+V；
-    /// macOS 也不把 Ctrl+V 映射成粘贴。这里统一接管两个快捷键，
-    /// 把剪贴板文本插到当前聚焦的输入框（保留光标与选区语义）。
-    private func installPasteShortcut() {
-        _ = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            // 本地事件监听覆盖整个宿主进程；站点窗口的粘贴必须交给它自己的 WKWebView。
-            guard let self = self, self.window.isKeyWindow else { return event }
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard flags.contains(.command) || flags.contains(.control),
-                  !flags.contains(.option),
-                  (event.charactersIgnoringModifiers ?? "").caseInsensitiveCompare("v") == .orderedSame
-            else { return event }
-            self.pasteFromClipboard()
-            return nil
-        }
-    }
-
-    @objc private func pasteFromMenu() { pasteFromClipboard() }
-
-    private func pasteFromClipboard() {
-        let text = NSPasteboard.general.string(forType: .string) ?? ""
-        guard !text.isEmpty else { return }
-        let literal = jsString(text)
-        let offset = (text as NSString).length
-        let js = """
-        (function(){
-          var el = document.activeElement;
-          if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
-          var s = (el.selectionStart == null) ? el.value.length : el.selectionStart;
-          var e = (el.selectionEnd == null) ? el.value.length : el.selectionEnd;
-          el.value = el.value.slice(0, s) + \(literal) + el.value.slice(e);
-          var p = s + \(offset);
-          try { el.setSelectionRange(p, p); } catch (_) {}
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-        })()
-        """
-        webView.evaluateJavaScript(js, completionHandler: nil)
+    private func showMessage(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.runModal()
     }
 
     // MARK: 菜单
@@ -482,9 +536,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         standard(WebHubLanguage.text("Cut"), "cut:", "x")
         standard(WebHubLanguage.text("Copy"), "copy:", "c")
 
-        let pasteItem = NSMenuItem(title: WebHubLanguage.text("Paste"), action: #selector(pasteFromMenu), keyEquivalent: "v")
-        pasteItem.target = self
-        editMenu.addItem(pasteItem)
+        standard(WebHubLanguage.text("Paste"), "paste:", "v")
 
         standard(WebHubLanguage.text("Select All"), "selectAll:", "a")
         editMenu.addItem(NSMenuItem.separator())
@@ -634,7 +686,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     }
 
     @objc private func addApp() {
-        eval("openSheet(null)")
+        showEditor(id: nil)
     }
 }
 

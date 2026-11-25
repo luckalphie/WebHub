@@ -4,6 +4,7 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
     private var controller: LauncherWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
         WebHubAppearance.apply(WebHubAppearance.preference)
         SharedStorage.warmUp()
         if !RunnerPackager.createsStandaloneApps {

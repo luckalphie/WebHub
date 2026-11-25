@@ -1,5 +1,9 @@
 import AppKit
 
+extension Notification.Name {
+    static let webHubDisplayPreferencesChanged = Notification.Name("WebHub.displayPreferencesChanged")
+}
+
 enum WebHubLanguage {
     static var languagePreference: String { UserDefaults.standard.string(forKey: "WebHub.language") ?? "system" }
     static var isChinese: Bool {
@@ -22,28 +26,33 @@ enum WebHubLanguage {
     }
 }
 
-final class LanguageMenu: NSObject {
+final class LanguageMenu: NSObject, NSMenuDelegate {
     static let shared = LanguageMenu()
 
     func makeItem() -> NSMenuItem {
         let item = NSMenuItem(title: WebHubLanguage.text("Language"), action: nil, keyEquivalent: "")
         let menu = NSMenu(title: WebHubLanguage.text("Language"))
+        menu.delegate = self
         for (title, value) in [(WebHubLanguage.text("System Default"), "system"), ("English", "en"), ("简体中文", "zh-CN")] {
             let choice = NSMenuItem(title: title, action: #selector(selectLanguage(_:)), keyEquivalent: "")
             choice.target = self
             choice.representedObject = value
-            choice.state = (WebHubLanguage.languagePreference == value) ? .on : .off
             menu.addItem(choice)
         }
+        menuNeedsUpdate(menu)
         item.submenu = menu
         return item
     }
 
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        for item in menu.items { item.state = (item.representedObject as? String) == WebHubLanguage.languagePreference ? .on : .off }
+    }
+
     @objc private func selectLanguage(_ sender: NSMenuItem) {
-        guard let language = sender.representedObject as? String,
-              language != WebHubLanguage.languagePreference else { return }
+        guard let language = sender.representedObject as? String, language != WebHubLanguage.languagePreference else { return }
         UserDefaults.standard.set(language, forKey: "WebHub.language")
-        sender.menu?.items.forEach { $0.state = $0 === sender ? .on : .off }
+        NotificationCenter.default.post(name: .webHubDisplayPreferencesChanged, object: nil)
+        if let menu = sender.menu { menuNeedsUpdate(menu) }
         let alert = NSAlert()
         alert.messageText = WebHubLanguage.text("Language changed")
         alert.informativeText = WebHubLanguage.text("Restart WebHub to apply the language change to all windows.")

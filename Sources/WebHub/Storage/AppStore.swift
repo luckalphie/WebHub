@@ -63,6 +63,24 @@ struct TabSession: Codable {
     var urls: [String]
     var activeIndex: Int
     var titles: [String]? = nil
+    var windowFrame: SavedWindowFrame? = nil
+}
+
+struct SavedWindowFrame: Codable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+
+    init(_ frame: NSRect) {
+        x = Double(frame.minX); y = Double(frame.minY)
+        width = Double(frame.width); height = Double(frame.height)
+    }
+
+    var rect: NSRect? {
+        guard x.isFinite, y.isFinite, width.isFinite, height.isFinite, width > 0, height > 0 else { return nil }
+        return NSRect(x: x, y: y, width: width, height: height)
+    }
 }
 
 // MARK: - 存储
@@ -79,6 +97,7 @@ final class AppStore {
     var legacyRunnerDir: URL { rootDir.appendingPathComponent("runners", isDirectory: true) }
     private var appsFile: URL { rootDir.appendingPathComponent("apps.json") }
     private var sessionsFile: URL { rootDir.appendingPathComponent("sessions.json") }
+    private var launcherSessionFile: URL { rootDir.appendingPathComponent("launcher-session.json") }
 
     /// 每个站点独立的数据目录。目录名使用稳定的 app id，不使用可变的站点名称。
     func appDataDir(for id: String) -> URL {
@@ -350,6 +369,25 @@ final class AppStore {
     }
 
     // MARK: 会话
+
+    func launcherWindowFrame() -> NSRect? {
+        guard let data = try? Data(contentsOf: launcherSessionFile),
+              let frame = try? JSONDecoder().decode(SavedWindowFrame.self, from: data) else { return nil }
+        return frame.rect
+    }
+
+    func saveLauncherWindowFrame(_ frame: NSRect) {
+        do {
+            let data = try JSONEncoder().encode(SavedWindowFrame(frame))
+            try data.write(to: launcherSessionFile, options: .atomic)
+        } catch { NSLog("WebHub: Failed to save launcher window frame: %@", error.localizedDescription) }
+    }
+
+    func saveSiteWindowFrame(_ frame: NSRect, for id: String) {
+        var current = session(for: id) ?? TabSession(urls: [], activeIndex: 0)
+        current.windowFrame = SavedWindowFrame(frame)
+        saveSession(current, for: id)
+    }
 
     private func sessionFile(for id: String, backup: Bool) -> URL {
         let base = backup ? backupDir.appendingPathComponent("apps", isDirectory: true) : rootDir.appendingPathComponent("apps", isDirectory: true)

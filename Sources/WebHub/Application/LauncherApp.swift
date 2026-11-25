@@ -9,7 +9,6 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     private var ready = false
     private var pendingSettings = false
     private var pendingPayload: String?
-    private let windowFrameKey = "WebHub.launcherWindowFrame"
     private var changingFullScreen = false
     /// 单宿主下菜单是全局的，站点窗口会挂上自己那份；切回应用中心时要还原
     private var launcherMenu: NSMenu?
@@ -93,10 +92,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
     }
 
     private func restoreWindowFrame() {
-        guard let values = UserDefaults.standard.array(forKey: windowFrameKey) as? [Double],
-              values.count == 4, values.allSatisfy({ $0.isFinite }),
-              values[2] > 0, values[3] > 0 else { return }
-        let saved = NSRect(x: values[0], y: values[1], width: values[2], height: values[3])
+        guard let saved = AppStore.shared.launcherWindowFrame() else { return }
         let screens = NSScreen.screens
         let screen = screens.max { left, right in
             let a = saved.intersection(left.visibleFrame)
@@ -116,7 +112,7 @@ final class LauncherWindowController: NSObject, WKNavigationDelegate, WKScriptMe
         guard let window = window, !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
         let frame = window.frame
         guard frame.width > 0, frame.height > 0 else { return }
-        UserDefaults.standard.set([Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)], forKey: windowFrameKey)
+        AppStore.shared.saveLauncherWindowFrame(frame)
     }
 
     @objc private func saveWindowFrameOnExit() { saveWindowFrame() }

@@ -235,15 +235,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     }
 
     private func buildWindow() {
-        let saved = UserDefaults.standard.dictionary(forKey: "WebHub.windowSize.\(appID)")
-        let savedWidth = (saved?["width"] as? Double).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-        let savedHeight = (saved?["height"] as? Double).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-        let savedX = (saved?["x"] as? Double).flatMap { $0.isFinite ? $0 : nil }
-        let savedY = (saved?["y"] as? Double).flatMap { $0.isFinite ? $0 : nil }
-        let savedFrame: NSRect? = {
-            guard let x = savedX, let y = savedY, let width = savedWidth, let height = savedHeight else { return nil }
-            return NSRect(x: x, y: y, width: width, height: height)
-        }()
+        let savedFrame = AppStore.shared.session(for: appID)?.windowFrame?.rect
         // 优先使用原窗口所在屏幕；显示器移除后回退到当前主屏幕。
         let screen = savedFrame.flatMap { frame in
             NSScreen.screens.filter { frame.intersects($0.visibleFrame) }.max { left, right in
@@ -253,13 +245,14 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
             }
         }
         let visible = screen?.visibleFrame ?? visibleScreenFrame()
-        let width = min(max(760, savedWidth ?? 1200), max(1, savedWidth == nil ? visible.width - 80 : visible.width))
-        let height = min(max(480, savedHeight ?? 800), max(1, savedHeight == nil ? visible.height - 80 : visible.height))
+        let width = min(max(760, savedFrame?.width ?? 1200), max(1, savedFrame == nil ? visible.width - 80 : visible.width))
+        let height = min(max(480, savedFrame?.height ?? 800), max(1, savedFrame == nil ? visible.height - 80 : visible.height))
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
+        window.tabbingMode = .disallowed
         window.title = appName
         window.isExcludedFromWindowsMenu = true
         // ⚠️ ARC 下必须关掉：默认 true 时窗口 close 后会被系统 release 一次，
@@ -771,7 +764,8 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
 
     /// 标签被关光：下次打开应该回到主页，而不是恢复上一次那批页面
     private func clearSession() {
-        AppStore.shared.saveSession(TabSession(urls: [], activeIndex: 0), for: appID)
+        let frame = AppStore.shared.session(for: appID)?.windowFrame
+        AppStore.shared.saveSession(TabSession(urls: [], activeIndex: 0, windowFrame: frame), for: appID)
     }
 
     private func rebuildTabBar() {
@@ -970,7 +964,8 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
     func persistSession() {
         let urls = tabs.map { $0.webView?.url?.absoluteString ?? $0.url.absoluteString }
         guard !urls.isEmpty else { return }
-        AppStore.shared.saveSession(TabSession(urls: urls, activeIndex: activeIndex, titles: tabs.map(\.title)), for: appID)
+        let frame = AppStore.shared.session(for: appID)?.windowFrame
+        AppStore.shared.saveSession(TabSession(urls: urls, activeIndex: activeIndex, titles: tabs.map(\.title), windowFrame: frame), for: appID)
     }
 
     // MARK: 动作
@@ -1046,9 +1041,7 @@ final class SiteWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, 
         guard let window = window, !changingFullScreen, !window.styleMask.contains(.fullScreen) else { return }
         let frame = window.frame
         guard frame.width > 0, frame.height > 0 else { return }
-        UserDefaults.standard.set(["x": Double(frame.minX), "y": Double(frame.minY),
-                                   "width": Double(frame.width), "height": Double(frame.height)],
-                                  forKey: "WebHub.windowSize.\(appID)")
+        AppStore.shared.saveSiteWindowFrame(frame, for: appID)
     }
 
     // MARK: 菜单

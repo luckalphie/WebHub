@@ -8,14 +8,14 @@
 #
 # 用法：
 #   sh scripts/build-app.sh
-#   WEBHUB_VERSION=1.2.1 sh scripts/build-app.sh
+#   WEBHUB_VERSION=1.3.0 sh scripts/build-app.sh
 #   WEBHUB_SIGN_IDENTITY="WebHub Local Signing" sh scripts/build-app.sh
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 APP="$ROOT/dist/WebHub.app"
 BUNDLE_ID="cn.webhub.launcher"
-VERSION="${WEBHUB_VERSION:-1.2.1}"
+VERSION="${WEBHUB_VERSION:-1.3.0}"
 if [ "${WEBHUB_SIGN_IDENTITY+x}" = x ]; then
     SIGN_IDENTITY="$WEBHUB_SIGN_IDENTITY"
 elif security find-identity -v -p codesigning 2>/dev/null | grep -Fq '"WebHub Local Signing"'; then

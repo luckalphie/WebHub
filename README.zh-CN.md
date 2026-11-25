@@ -59,7 +59,7 @@ WebHub.app（唯一真正干活的进程）
 
 `sh scripts/build-app.sh` 是受支持的运行方式。直接 `swift run` 出来的是没有 bundle 标识的裸可执行文件，而 WebKit 在没有 bundle 时行为不可靠 —— 窗口尺寸、cookie、shim 的拉起路径都假定自己跑在真正的 `.app` 里。
 
-用 `WEBHUB_VERSION=1.2.0` 可以改写包里的版本号。
+用 `WEBHUB_VERSION=1.3.0` 可以改写包里的版本号。
 
 构建脚本显式设置链接时的 SDK 版本，让标准 AppKit 控件使用当前系统外观，同时保留 macOS 14 的运行下限。
 
